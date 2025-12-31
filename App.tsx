@@ -1,0 +1,445 @@
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { TOTAL_NUMBERS } from './constants';
+import { WinType, TombolaCard, GameRole, PlayerInfo, PeerMessage } from './types';
+import { generateCard, checkWin } from './utils/gameLogic';
+import { getSmorfiaMeaning } from './services/geminiService';
+import MainBoard from './components/MainBoard';
+import TombolaCardUI from './components/TombolaCardUI';
+import { Play, Pause, RotateCcw, Plus, Users, Wifi, Monitor, User, Info, ArrowRight, Volume2 } from 'lucide-react';
+
+declare const Peer: any;
+
+const App: React.FC = () => {
+  const [role, setRole] = useState<GameRole>('Selecting');
+  const [userName, setUserName] = useState('');
+  const [roomId, setRoomId] = useState('');
+  const [peer, setPeer] = useState<any>(null);
+  const [connections, setConnections] = useState<Record<string, any>>({});
+  const [players, setPlayers] = useState<PlayerInfo[]>([]);
+  
+  const [drawnNumbers, setDrawnNumbers] = useState<number[]>([]);
+  const [lastDrawn, setLastDrawn] = useState<number | null>(null);
+  const [smorfia, setSmorfia] = useState<string | null>(null);
+  const [myCards, setMyCards] = useState<TombolaCard[]>([]);
+  const [isAutoPlaying, setIsAutoPlaying] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  
+  const timerRef = useRef<any>(null);
+
+  // Voice Synthesis Function
+  const speakItalian = (text: string) => {
+    if (!window.speechSynthesis) return;
+    window.speechSynthesis.cancel(); // Stop any current speech
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = 'it-IT';
+    utterance.rate = 0.9; // Slightly slower for clarity
+    
+    // Find an Italian voice if possible
+    const voices = window.speechSynthesis.getVoices();
+    const italianVoice = voices.find(v => v.lang.startsWith('it'));
+    if (italianVoice) utterance.voice = italianVoice;
+    
+    window.speechSynthesis.speak(utterance);
+  };
+
+  // Simplified Room ID generation
+  const generateSimpleRoomId = () => {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let result = 'TOMBOLA-';
+    for (let i = 0; i < 4; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  };
+
+  // Initialize Peer
+  const initPeer = (customId?: string) => {
+    const p = new Peer(customId);
+    p.on('open', (id: string) => {
+      setRoomId(id);
+      setPeer(p);
+    });
+    p.on('error', (err: any) => {
+      setError(`Errore di connessione: ${err.type}`);
+    });
+    return p;
+  };
+
+  // Host Logic
+  useEffect(() => {
+    if (role === 'Host' && peer) {
+      peer.on('connection', (conn: any) => {
+        conn.on('open', () => {
+          setConnections(prev => ({ ...prev, [conn.peer]: conn }));
+          conn.send({
+            type: 'SYNC_STATE',
+            payload: { drawnNumbers, lastDrawn, smorfia }
+          });
+        });
+
+        conn.on('data', (data: PeerMessage) => {
+          if (data.type === 'PLAYER_JOINED') {
+            setPlayers(prev => [...prev, { ...data.payload, id: conn.peer, lastWin: 'None' }]);
+          }
+          if (data.type === 'WIN_CLAIM') {
+            const { playerName, winType } = data.payload;
+            speakItalian(`Attenzione! ${playerName} ha fatto ${winType}!`);
+            alert(`${playerName} dichiara: ${winType}!`);
+          }
+        });
+      });
+    }
+  }, [role, peer, drawnNumbers, lastDrawn, smorfia]);
+
+  // Player Logic
+  const connectToHost = (id: string) => {
+    if (!peer) return;
+    const conn = peer.connect(id);
+    conn.on('open', () => {
+      setConnections({ host: conn });
+      conn.send({
+        type: 'PLAYER_JOINED',
+        payload: { name: userName, cards: myCards }
+      });
+      setRole('Player');
+    });
+
+    conn.on('data', (data: PeerMessage) => {
+      if (data.type === 'SYNC_STATE' || data.type === 'DRAW_NUMBER') {
+        const { drawnNumbers: syncedDrawn, lastDrawn: syncedLast, smorfia: syncedSmorfia } = data.payload;
+        setDrawnNumbers(syncedDrawn);
+        setLastDrawn(syncedLast);
+        setSmorfia(syncedSmorfia);
+      }
+    });
+  };
+
+  const drawNumber = useCallback(async () => {
+    if (drawnNumbers.length >= TOTAL_NUMBERS) {
+      setIsAutoPlaying(false);
+      speakItalian("Gioco terminato. Tutti i numeri sono stati estratti.");
+      return;
+    }
+
+    const available = Array.from({ length: TOTAL_NUMBERS }, (_, i) => i + 1)
+      .filter(n => !drawnNumbers.includes(n));
+    
+    const next = available[Math.floor(Math.random() * available.length)];
+    const newDrawn = [...drawnNumbers, next];
+    const meaning = await getSmorfiaMeaning(next);
+
+    setDrawnNumbers(newDrawn);
+    setLastDrawn(next);
+    setSmorfia(meaning);
+
+    // TTS Call in Italian
+    // Remove the number part from meaning string for cleaner speech if needed, or just speak the full thing
+    // Usually meaning is "90: La paura"
+    const speechText = `Numero ${next}. ${meaning.split(':').pop()?.trim() || ''}`;
+    speakItalian(speechText);
+
+    Object.values(connections).forEach((conn: any) => {
+      conn.send({
+        type: 'DRAW_NUMBER',
+        payload: { drawnNumbers: newDrawn, lastDrawn: next, smorfia: meaning }
+      });
+    });
+  }, [drawnNumbers, connections]);
+
+  useEffect(() => {
+    if (isAutoPlaying && role === 'Host') {
+      timerRef.current = setInterval(drawNumber, 5000); // 5 seconds to allow for speech
+    } else {
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [isAutoPlaying, drawNumber, role]);
+
+  const claimWin = (winType: WinType) => {
+    if (role === 'Player' && connections.host) {
+      connections.host.send({
+        type: 'WIN_CLAIM',
+        payload: { playerName: userName, winType }
+      });
+    }
+  };
+
+  const handleStartHost = () => {
+    if (!userName) return alert('Inserisci il tuo nome');
+    initPeer(generateSimpleRoomId());
+    setRole('Host');
+  };
+
+  const handleJoinGame = () => {
+    if (!userName || !roomId) return alert('Inserisci nome e Codice Tombola');
+    initPeer();
+    setTimeout(() => connectToHost(roomId.toUpperCase()), 1000);
+  };
+
+  if (role === 'Selecting') {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-white font-sans overflow-hidden">
+        <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none bg-[radial-gradient(circle_at_50%_50%,rgba(220,38,38,0.3),transparent_70%)]"></div>
+        
+        <div className="max-w-4xl w-full z-10 space-y-12">
+          <header className="text-center space-y-4">
+            <h1 className="text-6xl font-serif font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-red-500 to-amber-500">
+              Tombola Royale
+            </h1>
+            <p className="text-slate-400 text-lg">Esperienza Multiplayer Tradizionale</p>
+          </header>
+
+          <div className="grid md:grid-cols-2 gap-8">
+            <div className="bg-slate-800/50 backdrop-blur-xl border border-slate-700 p-8 rounded-3xl hover:border-red-500/50 transition-all group">
+              <div className="w-14 h-14 bg-red-600 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                <Monitor className="text-white" size={32} />
+              </div>
+              <h2 className="text-2xl font-bold mb-4">Crea Partita</h2>
+              <p className="text-slate-400 mb-8">Gestisci il tabellone principale. La tua voce chiamerà i numeri in Italiano.</p>
+              
+              <div className="space-y-4">
+                <input 
+                  type="text" 
+                  placeholder="Tuo Nome (Host)" 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-red-500 outline-none transition-all"
+                  value={userName}
+                  onChange={e => setUserName(e.target.value)}
+                />
+                <button 
+                  onClick={handleStartHost}
+                  className="w-full bg-red-600 hover:bg-red-700 py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-red-900/20"
+                >
+                  Crea Stanza <ArrowRight size={20} />
+                </button>
+              </div>
+            </div>
+
+            <div className="bg-slate-800/50 backdrop-blur-xl border border-slate-700 p-8 rounded-3xl hover:border-amber-500/50 transition-all group">
+              <div className="w-14 h-14 bg-amber-500 rounded-2xl flex items-center justify-center mb-6 group-hover:scale-110 transition-transform">
+                <Users className="text-white" size={32} />
+              </div>
+              <h2 className="text-2xl font-bold mb-4">Partecipa</h2>
+              <p className="text-slate-400 mb-8">Inserisci il "Codice Network" mostrato sull'host per ricevere le tue cartelle digitali.</p>
+              
+              <div className="space-y-4">
+                <input 
+                  type="text" 
+                  placeholder="Tuo Nome" 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-amber-500 outline-none transition-all mb-2"
+                  value={userName}
+                  onChange={e => setUserName(e.target.value)}
+                />
+                <input 
+                  type="text" 
+                  placeholder="Codice Tombola (es. TOMBOLA-ABCD)" 
+                  className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-amber-500 outline-none transition-all"
+                  value={roomId}
+                  onChange={e => setRoomId(e.target.value)}
+                />
+                <button 
+                  onClick={handleJoinGame}
+                  className="w-full bg-amber-500 hover:bg-amber-600 py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-amber-900/20"
+                >
+                  Entra <Wifi size={20} />
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <footer className="text-center text-slate-500 text-sm flex items-center justify-center gap-4">
+             <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-green-500"></div> Peer-to-Peer Attivo</div>
+             <div className="h-4 w-px bg-slate-700"></div>
+             <div className="flex items-center gap-2"><Volume2 size={16} /> Chiamate Vocali in Italiano</div>
+          </footer>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
+      <nav className="bg-white border-b sticky top-0 z-50 px-6 py-4 shadow-sm flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="bg-red-600 p-2 rounded-lg text-white font-black text-xl shadow-lg">90</div>
+          <h1 className="text-2xl font-serif font-bold tracking-tight text-red-700 hidden sm:block">Tombola Royale</h1>
+          <div className="ml-4 px-3 py-1 bg-slate-100 rounded-lg text-[10px] font-mono font-bold text-slate-500 flex items-center gap-2 uppercase tracking-widest">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+            {role === 'Host' ? 'Annunciatore' : 'Giocatore'}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <div className="hidden lg:flex flex-col items-end mr-4">
+            <span className="text-[10px] uppercase text-slate-400 font-bold tracking-widest">Codice Network</span>
+            <span className="font-mono font-black text-slate-900 bg-amber-100 px-3 py-0.5 rounded-lg border border-amber-200">{roomId || '...'}</span>
+          </div>
+
+          {role === 'Host' && (
+            <button 
+              onClick={() => setIsAutoPlaying(!isAutoPlaying)}
+              className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-bold transition-all ${isAutoPlaying ? 'bg-amber-100 text-amber-700' : 'bg-red-600 text-white shadow-md'}`}
+            >
+              {isAutoPlaying ? <Pause size={18} /> : <Play size={18} />}
+            </button>
+          )}
+          
+          <button 
+            onClick={() => window.location.reload()}
+            className="p-2.5 bg-gray-100 text-gray-600 rounded-full hover:bg-gray-200"
+          >
+            <RotateCcw size={20} />
+          </button>
+        </div>
+      </nav>
+
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <div className={`grid grid-cols-1 ${role === 'Host' ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-8`}>
+          
+          <div className={`${role === 'Host' ? 'lg:col-span-2' : 'max-w-4xl mx-auto w-full'} space-y-6`}>
+            
+            <div className="bg-gradient-to-br from-red-600 to-red-800 rounded-[2rem] p-8 text-white shadow-2xl relative overflow-hidden flex flex-col items-center justify-center min-h-[260px] border-b-8 border-red-900/30">
+              {lastDrawn ? (
+                <div className="text-center z-10 animate-in fade-in zoom-in duration-300">
+                  <div className="text-sm font-medium tracking-[0.2em] uppercase opacity-70 mb-2 font-mono">Numero Estratto</div>
+                  <div className="text-[140px] font-black leading-none drop-shadow-2xl mb-4 tabular-nums">
+                    {lastDrawn}
+                  </div>
+                  <div className="bg-white/10 backdrop-blur-md px-8 py-3 rounded-2xl text-2xl font-serif italic inline-block border border-white/20 shadow-inner">
+                    {smorfia || '...'}
+                  </div>
+                </div>
+              ) : (
+                <div className="text-center z-10 py-10">
+                  <p className="text-3xl font-serif italic mb-4">In attesa della prima estrazione...</p>
+                  <div className="flex justify-center gap-3">
+                    <div className="w-3 h-3 bg-white/40 rounded-full animate-bounce"></div>
+                    <div className="w-3 h-3 bg-white/40 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                    <div className="w-3 h-3 bg-white/40 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {role === 'Host' && <MainBoard drawnNumbers={drawnNumbers} lastDrawn={lastDrawn} />}
+
+            {role === 'Player' && (
+              <div className="space-y-8">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-3xl font-bold text-slate-800">Le Mie Cartelle</h2>
+                  <button 
+                    onClick={() => setMyCards([...myCards, generateCard()])}
+                    className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-900/20 hover:bg-emerald-600 transition-all"
+                  >
+                    <Plus size={20} /> Nuova Cartella
+                  </button>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {myCards.map(card => (
+                    <div key={card.id} className="space-y-4">
+                       <TombolaCardUI card={card} drawnNumbers={drawnNumbers} />
+                       {checkWin(card, drawnNumbers) !== 'None' && (
+                         <button 
+                            onClick={() => claimWin(checkWin(card, drawnNumbers))}
+                            className="w-full py-4 bg-amber-500 text-white font-black rounded-xl uppercase tracking-widest animate-pulse shadow-lg shadow-amber-500/30 text-lg"
+                         >
+                            Dichiara {checkWin(card, drawnNumbers)}!
+                         </button>
+                       )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {role === 'Host' && (
+            <div className="space-y-6">
+              <div className="bg-white rounded-3xl p-6 shadow-xl border border-slate-100 min-h-[500px]">
+                <div className="flex items-center justify-between mb-6 border-b pb-4">
+                  <h3 className="text-xl font-bold flex items-center gap-2">
+                    <Users size={20} className="text-blue-500" />
+                    Giocatori ({Object.keys(connections).length})
+                  </h3>
+                  <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-1 rounded">
+                    <Volume2 size={12} /> LIVE AUDIO
+                  </div>
+                </div>
+                
+                <div className="space-y-3">
+                  {Object.keys(connections).length === 0 ? (
+                    <div className="text-center py-12 px-4">
+                      <div className="w-16 h-16 bg-slate-50 rounded-2xl flex items-center justify-center mx-auto mb-4 border border-slate-100 shadow-inner">
+                        <Wifi className="text-slate-300" size={32} />
+                      </div>
+                      <p className="text-slate-400 text-sm mb-4">Condividi il Codice Network per far entrare i giocatori:</p>
+                      <div className="bg-slate-900 text-white p-4 rounded-2xl font-mono text-xl font-black tracking-widest shadow-xl ring-4 ring-slate-100">
+                        {roomId}
+                      </div>
+                    </div>
+                  ) : (
+                    players.map(p => (
+                      <div key={p.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-blue-200 transition-all">
+                        <div className="flex items-center gap-3">
+                          <div className="w-10 h-10 bg-gradient-to-tr from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-lg">
+                            {p.name.charAt(0).toUpperCase()}
+                          </div>
+                          <div>
+                            <p className="font-bold text-slate-800">{p.name}</p>
+                            <p className="text-[10px] text-slate-400 font-mono tracking-tighter">ID: {p.id.slice(-6)}</p>
+                          </div>
+                        </div>
+                        {p.lastWin !== 'None' && (
+                          <div className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[10px] font-black uppercase ring-1 ring-amber-200">
+                            {p.lastWin}
+                          </div>
+                        )}
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div className="mt-8 p-4 bg-blue-50 rounded-2xl border border-blue-100">
+                   <div className="flex items-start gap-3">
+                      <Info className="text-blue-600 mt-0.5" size={16} />
+                      <p className="text-xs text-blue-700 leading-relaxed font-medium">
+                        I giocatori riceveranno i numeri istantaneamente. Assicurati che il volume del PC sia attivo per sentire l'estrazione!
+                      </p>
+                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      </main>
+
+      {role !== 'Selecting' && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-2xl border border-slate-200/50 px-10 py-4 rounded-full shadow-2xl flex items-center gap-12 z-50 ring-1 ring-white">
+          <div className="flex flex-col items-center">
+            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Estratti</span>
+            <span className="text-2xl font-black text-red-600">{drawnNumbers.length}<span className="text-slate-300 text-sm font-normal">/90</span></span>
+          </div>
+          <div className="h-10 w-px bg-slate-200"></div>
+          
+          {role === 'Host' ? (
+            <button 
+              onClick={drawNumber}
+              disabled={isAutoPlaying || drawnNumbers.length >= 90}
+              className="flex items-center gap-3 px-8 py-3 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all disabled:opacity-50 shadow-xl shadow-slate-900/20 active:scale-95"
+            >
+              <Plus size={20} /> Prossimo Numero
+            </button>
+          ) : (
+             <div className="flex flex-col items-center">
+              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Sei Connesso come</span>
+              <span className="text-2xl font-black text-emerald-600">{userName}</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;

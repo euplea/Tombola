@@ -1,0 +1,5 @@
+{
+  "name": "Tombola Royale Multiplayer",
+  "description": "Multiplayer Italian Tombola with Peer-to-Peer connectivity. Host a board on PC and join with mobile devices over local network/WiFi.",
+  "requestFramePermissions": []
+}

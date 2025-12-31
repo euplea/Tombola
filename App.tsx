@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TOTAL_NUMBERS } from './constants';
 import { WinType, TombolaCard, GameRole, PlayerInfo, PeerMessage } from './types';
@@ -6,15 +5,18 @@ import { generateCard, checkWin } from './utils/gameLogic';
 import { getSmorfiaMeaning } from './services/geminiService';
 import MainBoard from './components/MainBoard';
 import TombolaCardUI from './components/TombolaCardUI';
-import { Play, Pause, RotateCcw, Plus, Users, Wifi, Monitor, User, Info, ArrowRight, Volume2, Trophy } from 'lucide-react';
-
-declare const Peer: any;
+import GameManual from './components/GameManual';
+import PrintableCards from './components/PrintableCards';
+import PrizePool from './components/PrizePool';
+import { Play, Pause, RotateCcw, Plus, Users, Wifi, Monitor, User, Info, ArrowRight, Volume2, Trophy, BookOpen, Printer, Coins } from 'lucide-react';
+import confetti from 'canvas-confetti';
+import { Peer } from 'peerjs';
 
 const App: React.FC = () => {
   const [role, setRole] = useState<GameRole>('Selecting');
   const [userName, setUserName] = useState('');
   const [roomId, setRoomId] = useState('');
-  const [peer, setPeer] = useState<any>(null);
+  const [peer, setPeer] = useState<Peer | null>(null);
   const [connections, setConnections] = useState<Record<string, any>>({});
   const [players, setPlayers] = useState<PlayerInfo[]>([]);
   
@@ -24,8 +26,16 @@ const App: React.FC = () => {
   const [myCards, setMyCards] = useState<TombolaCard[]>([]);
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [showManual, setShowManual] = useState(false);
+  const [showPrinter, setShowPrinter] = useState(false);
+  const [totalNetworkCards, setTotalNetworkCards] = useState(0);
   
   const timerRef = useRef<any>(null);
+
+  // Derived state for Total Cards (Host Logic vs Player Logic)
+  const totalCardsInGame = role === 'Host' 
+    ? myCards.length + players.reduce((acc, p) => acc + p.cards.length, 0)
+    : totalNetworkCards;
 
   // Voice Synthesis Function
   const speakItalian = (text: string) => {
@@ -76,8 +86,45 @@ const App: React.FC = () => {
     }
   }, [myCards, role, connections.host]);
 
+  // Visual Effect Trigger
+  const triggerWinEffect = (type: WinType) => {
+    if (type === 'Tombola') {
+      // Grand Finale Animation for Tombola
+      const duration = 5 * 1000;
+      const animationEnd = Date.now() + duration;
+      const defaults = { startVelocity: 30, spread: 360, ticks: 60, zIndex: 999 };
+
+      const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
+
+      const interval: any = setInterval(function() {
+        const timeLeft = animationEnd - Date.now();
+
+        if (timeLeft <= 0) {
+          return clearInterval(interval);
+        }
+
+        const particleCount = 50 * (timeLeft / duration);
+        // since particles fall down, start a bit higher than random
+        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.1, 0.3), y: Math.random() - 0.2 } });
+        confetti({ ...defaults, particleCount, origin: { x: randomInRange(0.7, 0.9), y: Math.random() - 0.2 } });
+      }, 250);
+    } else {
+      // Standard burst for intermediate wins
+      confetti({
+        particleCount: 150,
+        spread: 100,
+        origin: { y: 0.6 },
+        colors: ['#EF4444', '#F59E0B', '#10B981', '#3B82F6'], // Red, Amber, Emerald, Blue
+        disableForReducedMotion: true
+      });
+    }
+  };
+
   // Handle Win Claims Logic (Unified verification for 'Tombola')
   const handleWinClaim = useCallback((claimantId: string, claimantName: string, winType: WinType) => {
+    // Trigger visual effect immediately
+    triggerWinEffect(winType);
+
     if (winType === 'Tombola') {
       // Logic for Tombola: check all participants for shared winners
       const winners: string[] = [];
@@ -130,7 +177,7 @@ const App: React.FC = () => {
           setConnections(prev => ({ ...prev, [conn.peer]: conn }));
           conn.send({
             type: 'SYNC_STATE',
-            payload: { drawnNumbers, lastDrawn, smorfia }
+            payload: { drawnNumbers, lastDrawn, smorfia, totalCards: totalCardsInGame }
           });
         });
 
@@ -163,7 +210,7 @@ const App: React.FC = () => {
         });
       });
     }
-  }, [role, peer, drawnNumbers, lastDrawn, smorfia, handleWinClaim]);
+  }, [role, peer, drawnNumbers, lastDrawn, smorfia, handleWinClaim, totalCardsInGame]);
 
   // Player Logic
   const connectToHost = (id: string) => {
@@ -180,10 +227,11 @@ const App: React.FC = () => {
 
     conn.on('data', (data: PeerMessage) => {
       if (data.type === 'SYNC_STATE' || data.type === 'DRAW_NUMBER') {
-        const { drawnNumbers: syncedDrawn, lastDrawn: syncedLast, smorfia: syncedSmorfia } = data.payload;
+        const { drawnNumbers: syncedDrawn, lastDrawn: syncedLast, smorfia: syncedSmorfia, totalCards } = data.payload;
         setDrawnNumbers(syncedDrawn);
         setLastDrawn(syncedLast);
         setSmorfia(syncedSmorfia);
+        if (totalCards !== undefined) setTotalNetworkCards(totalCards);
       }
     });
   };
@@ -212,10 +260,10 @@ const App: React.FC = () => {
     Object.values(connections).forEach((conn: any) => {
       conn.send({
         type: 'DRAW_NUMBER',
-        payload: { drawnNumbers: newDrawn, lastDrawn: next, smorfia: meaning }
+        payload: { drawnNumbers: newDrawn, lastDrawn: next, smorfia: meaning, totalCards: totalCardsInGame }
       });
     });
-  }, [drawnNumbers, connections]);
+  }, [drawnNumbers, connections, totalCardsInGame]);
 
   useEffect(() => {
     if (isAutoPlaying && role === 'Host') {
@@ -338,6 +386,12 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
+      {/* Manual Modal */}
+      {showManual && <GameManual onClose={() => setShowManual(false)} />}
+      
+      {/* Printer Modal */}
+      {showPrinter && <PrintableCards onClose={() => setShowPrinter(false)} />}
+
       <nav className="bg-white border-b sticky top-0 z-50 px-6 py-4 shadow-sm flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="bg-red-600 p-2 rounded-lg text-white font-black text-xl shadow-lg">90</div>
@@ -354,13 +408,32 @@ const App: React.FC = () => {
             <span className="font-mono font-black text-slate-900 bg-amber-100 px-3 py-0.5 rounded-lg border border-amber-200">{roomId || '...'}</span>
           </div>
 
+          {/* Host Tools */}
           {role === 'Host' && (
-            <button 
-              onClick={() => setIsAutoPlaying(!isAutoPlaying)}
-              className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-bold transition-all ${isAutoPlaying ? 'bg-amber-100 text-amber-700' : 'bg-red-600 text-white shadow-md'}`}
-            >
-              {isAutoPlaying ? <Pause size={18} /> : <Play size={18} />}
-            </button>
+            <>
+                <button 
+                onClick={() => setShowPrinter(true)}
+                className="p-2.5 bg-purple-50 text-purple-600 rounded-full hover:bg-purple-100 transition-colors mr-1"
+                title="Stampa Cartelle"
+                >
+                <Printer size={20} />
+                </button>
+
+                <button 
+                onClick={() => setShowManual(true)}
+                className="p-2.5 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors mr-1"
+                title="Apri Manuale"
+                >
+                <BookOpen size={20} />
+                </button>
+
+                <button 
+                onClick={() => setIsAutoPlaying(!isAutoPlaying)}
+                className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-bold transition-all ${isAutoPlaying ? 'bg-amber-100 text-amber-700' : 'bg-red-600 text-white shadow-md'}`}
+                >
+                {isAutoPlaying ? <Pause size={18} /> : <Play size={18} />}
+                </button>
+            </>
           )}
           
           <button 
@@ -400,16 +473,25 @@ const App: React.FC = () => {
               )}
             </div>
 
+            {/* PRIZE POOL DISPLAY - Visible to Everyone */}
+            <PrizePool totalCards={totalCardsInGame} />
+
             {role === 'Host' && <MainBoard drawnNumbers={drawnNumbers} lastDrawn={lastDrawn} />}
 
             <div className="space-y-6">
               <div className="flex items-center justify-between">
-                <h2 className="text-3xl font-bold text-slate-800">Le Mie Cartelle</h2>
+                <h2 className="text-3xl font-bold text-slate-800">
+                    {role === 'Host' ? 'Le Mie Cartelle (Host)' : 'Le Mie Cartelle'}
+                </h2>
                 <button 
                   onClick={() => setMyCards([...myCards, generateCard()])}
                   className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-900/20 hover:bg-emerald-600 transition-all active:scale-95"
                 >
-                  <Plus size={20} /> Nuova Cartella
+                  <Plus size={20} /> 
+                  <span className="flex flex-col items-start leading-none">
+                     <span>Compra Cartella</span>
+                     <span className="text-[10px] opacity-80 font-mono">-10 Token</span>
+                  </span>
                 </button>
               </div>
               
@@ -417,7 +499,8 @@ const App: React.FC = () => {
                 {myCards.length === 0 ? (
                   <div className="md:col-span-2 py-12 bg-white rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400">
                     <Trophy size={48} className="mb-4 opacity-20" />
-                    <p>Non hai ancora nessuna cartella. Clicca su "Nuova Cartella" per iniziare!</p>
+                    <p>Non hai ancora nessuna cartella.</p>
+                    <p className="text-sm mt-2 text-emerald-600 font-bold">Acquista una cartella per incrementare il Montepremi!</p>
                   </div>
                 ) : (
                   myCards.map(card => {
@@ -479,7 +562,12 @@ const App: React.FC = () => {
                           </div>
                           <div>
                             <p className="font-bold text-slate-800 text-sm leading-tight">{p.name}</p>
-                            <p className="text-[9px] text-slate-400 font-mono uppercase tracking-tighter">ID: {p.id.slice(-6)}</p>
+                            <div className="flex items-center gap-2 mt-0.5">
+                                <p className="text-[9px] text-slate-400 font-mono uppercase tracking-tighter">ID: {p.id.slice(-6)}</p>
+                                <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
+                                    {p.cards.length} Cartelle
+                                </span>
+                            </div>
                           </div>
                         </div>
                         
@@ -501,7 +589,7 @@ const App: React.FC = () => {
                    <div className="flex items-start gap-3">
                       <Info className="text-blue-600 mt-0.5" size={16} />
                       <p className="text-xs text-blue-700 leading-relaxed font-medium">
-                        Vedi qui chi sta partecipando in tempo reale. In caso di Tombola, il sistema verificherà tutte le cartelle per eventuali vincite condivise.
+                        Ogni cartella acquistata (sia tua che dei giocatori) aggiunge 10 Token al Montepremi comune visualizzato in alto.
                       </p>
                    </div>
                 </div>
@@ -511,8 +599,7 @@ const App: React.FC = () => {
         </div>
       </main>
 
-      {role !== 'Selecting' && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-2xl border border-slate-200/50 px-10 py-4 rounded-full shadow-2xl flex items-center gap-12 z-50 ring-1 ring-white">
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-2xl border border-slate-200/50 px-10 py-4 rounded-full shadow-2xl flex items-center gap-12 z-50 ring-1 ring-white">
           <div className="flex flex-col items-center">
             <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Estratti</span>
             <span className="text-2xl font-black text-red-600">{drawnNumbers.length}<span className="text-slate-300 text-sm font-normal">/90</span></span>
@@ -534,7 +621,6 @@ const App: React.FC = () => {
             </div>
           )}
         </div>
-      )}
     </div>
   );
 };

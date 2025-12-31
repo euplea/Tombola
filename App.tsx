@@ -6,7 +6,7 @@ import { generateCard, checkWin } from './utils/gameLogic';
 import { getSmorfiaMeaning } from './services/geminiService';
 import MainBoard from './components/MainBoard';
 import TombolaCardUI from './components/TombolaCardUI';
-import { Play, Pause, RotateCcw, Plus, Users, Wifi, Monitor, User, Info, ArrowRight, Volume2 } from 'lucide-react';
+import { Play, Pause, RotateCcw, Plus, Users, Wifi, Monitor, User, Info, ArrowRight, Volume2, Trophy } from 'lucide-react';
 
 declare const Peer: any;
 
@@ -66,6 +66,62 @@ const App: React.FC = () => {
     return p;
   };
 
+  // Player logic to sync cards to host
+  useEffect(() => {
+    if (role === 'Player' && connections.host && myCards.length > 0) {
+      connections.host.send({
+        type: 'CARD_SYNC',
+        payload: { cards: myCards }
+      });
+    }
+  }, [myCards, role, connections.host]);
+
+  // Handle Win Claims Logic (Unified verification for 'Tombola')
+  const handleWinClaim = useCallback((claimantId: string, claimantName: string, winType: WinType) => {
+    if (winType === 'Tombola') {
+      // Logic for Tombola: check all participants for shared winners
+      const winners: string[] = [];
+
+      // Check Host
+      const hostHasTombola = myCards.some(c => checkWin(c, drawnNumbers) === 'Tombola');
+      if (hostHasTombola) winners.push(`${userName} (Host)`);
+
+      // Check all connected players
+      players.forEach(p => {
+        const hasTombola = p.cards.some(c => checkWin(c, drawnNumbers) === 'Tombola');
+        if (hasTombola) {
+          winners.push(p.name);
+        }
+      });
+
+      if (winners.length > 1) {
+        const winnerList = winners.join(', ');
+        speakItalian(`Vittoria condivisa! Hanno fatto Tombola: ${winnerList}! Complimenti a tutti!`);
+        alert(`VITTORIA CONDIVISA! Vincitori: ${winnerList}`);
+      } else if (winners.length === 1) {
+        speakItalian(`Tombola! Il vincitore unico è ${winners[0]}!`);
+        alert(`TOMBOLA! Vincitore: ${winners[0]}`);
+      } else {
+        // This shouldn't happen if the claim is valid, but for safety:
+        speakItalian(`${claimantName} ha dichiarato Tombola, ma i numeri non corrispondono.`);
+      }
+
+      // Update state for all verified winners in player list
+      setPlayers(prev => prev.map(p => 
+        winners.includes(p.name) ? { ...p, lastWin: 'Tombola' } : p
+      ));
+    } else {
+      // Standard announcement for Ambo, Terno, etc.
+      speakItalian(`Attenzione! ${claimantName} ha fatto ${winType}!`);
+      
+      setPlayers(prev => prev.map(p => 
+        p.id === claimantId ? { ...p, lastWin: winType } : p
+      ));
+      
+      alert(`${claimantName} dichiara: ${winType}!`);
+    }
+  }, [userName, myCards, players, drawnNumbers]);
+
   // Host Logic
   useEffect(() => {
     if (role === 'Host' && peer) {
@@ -80,17 +136,34 @@ const App: React.FC = () => {
 
         conn.on('data', (data: PeerMessage) => {
           if (data.type === 'PLAYER_JOINED') {
-            setPlayers(prev => [...prev, { ...data.payload, id: conn.peer, lastWin: 'None' }]);
+            setPlayers(prev => {
+              const exists = prev.find(p => p.id === conn.peer);
+              if (exists) return prev;
+              return [...prev, { ...data.payload, id: conn.peer, lastWin: 'None' }];
+            });
+          }
+          if (data.type === 'CARD_SYNC') {
+            setPlayers(prev => prev.map(p => 
+              p.id === conn.peer ? { ...p, cards: data.payload.cards } : p
+            ));
           }
           if (data.type === 'WIN_CLAIM') {
             const { playerName, winType } = data.payload;
-            speakItalian(`Attenzione! ${playerName} ha fatto ${winType}!`);
-            alert(`${playerName} dichiara: ${winType}!`);
+            handleWinClaim(conn.peer, playerName, winType);
           }
+        });
+
+        conn.on('close', () => {
+          setConnections(prev => {
+            const newConns = { ...prev };
+            delete newConns[conn.peer];
+            return newConns;
+          });
+          setPlayers(prev => prev.filter(p => p.id !== conn.peer));
         });
       });
     }
-  }, [role, peer, drawnNumbers, lastDrawn, smorfia]);
+  }, [role, peer, drawnNumbers, lastDrawn, smorfia, handleWinClaim]);
 
   // Player Logic
   const connectToHost = (id: string) => {
@@ -133,9 +206,6 @@ const App: React.FC = () => {
     setLastDrawn(next);
     setSmorfia(meaning);
 
-    // TTS Call in Italian
-    // Remove the number part from meaning string for cleaner speech if needed, or just speak the full thing
-    // Usually meaning is "90: La paura"
     const speechText = `Numero ${next}. ${meaning.split(':').pop()?.trim() || ''}`;
     speakItalian(speechText);
 
@@ -149,7 +219,7 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isAutoPlaying && role === 'Host') {
-      timerRef.current = setInterval(drawNumber, 5000); // 5 seconds to allow for speech
+      timerRef.current = setInterval(drawNumber, 5000);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
     }
@@ -162,6 +232,15 @@ const App: React.FC = () => {
         type: 'WIN_CLAIM',
         payload: { playerName: userName, winType }
       });
+    } else if (role === 'Host') {
+      // If host claims, use the shared win detection logic immediately
+      handleWinClaim(peer?.id || 'host', userName, winType);
+      
+      setMyCards(prev => prev.map(c => {
+         const currentWin = checkWin(c, drawnNumbers);
+         if (currentWin === winType) return { ...c, lastWin: winType };
+         return c;
+      }));
     }
   };
 
@@ -296,7 +375,7 @@ const App: React.FC = () => {
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className={`grid grid-cols-1 ${role === 'Host' ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-8`}>
           
-          <div className={`${role === 'Host' ? 'lg:col-span-2' : 'max-w-4xl mx-auto w-full'} space-y-6`}>
+          <div className={`${role === 'Host' ? 'lg:col-span-2' : 'max-w-4xl mx-auto w-full'} space-y-8`}>
             
             <div className="bg-gradient-to-br from-red-600 to-red-800 rounded-[2rem] p-8 text-white shadow-2xl relative overflow-hidden flex flex-col items-center justify-center min-h-[260px] border-b-8 border-red-900/30">
               {lastDrawn ? (
@@ -323,35 +402,45 @@ const App: React.FC = () => {
 
             {role === 'Host' && <MainBoard drawnNumbers={drawnNumbers} lastDrawn={lastDrawn} />}
 
-            {role === 'Player' && (
-              <div className="space-y-8">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-3xl font-bold text-slate-800">Le Mie Cartelle</h2>
-                  <button 
-                    onClick={() => setMyCards([...myCards, generateCard()])}
-                    className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-900/20 hover:bg-emerald-600 transition-all"
-                  >
-                    <Plus size={20} /> Nuova Cartella
-                  </button>
-                </div>
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {myCards.map(card => (
-                    <div key={card.id} className="space-y-4">
-                       <TombolaCardUI card={card} drawnNumbers={drawnNumbers} />
-                       {checkWin(card, drawnNumbers) !== 'None' && (
-                         <button 
-                            onClick={() => claimWin(checkWin(card, drawnNumbers))}
-                            className="w-full py-4 bg-amber-500 text-white font-black rounded-xl uppercase tracking-widest animate-pulse shadow-lg shadow-amber-500/30 text-lg"
-                         >
-                            Dichiara {checkWin(card, drawnNumbers)}!
-                         </button>
-                       )}
-                    </div>
-                  ))}
-                </div>
+            <div className="space-y-6">
+              <div className="flex items-center justify-between">
+                <h2 className="text-3xl font-bold text-slate-800">Le Mie Cartelle</h2>
+                <button 
+                  onClick={() => setMyCards([...myCards, generateCard()])}
+                  className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-900/20 hover:bg-emerald-600 transition-all active:scale-95"
+                >
+                  <Plus size={20} /> Nuova Cartella
+                </button>
               </div>
-            )}
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {myCards.length === 0 ? (
+                  <div className="md:col-span-2 py-12 bg-white rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400">
+                    <Trophy size={48} className="mb-4 opacity-20" />
+                    <p>Non hai ancora nessuna cartella. Clicca su "Nuova Cartella" per iniziare!</p>
+                  </div>
+                ) : (
+                  myCards.map(card => {
+                    const achievedWin = checkWin(card, drawnNumbers);
+                    const canClaim = achievedWin !== 'None' && achievedWin !== card.lastWin;
+
+                    return (
+                      <div key={card.id} className="space-y-4">
+                         <TombolaCardUI card={card} drawnNumbers={drawnNumbers} />
+                         {canClaim && (
+                           <button 
+                              onClick={() => claimWin(achievedWin)}
+                              className="w-full py-4 bg-amber-500 text-white font-black rounded-xl uppercase tracking-widest animate-pulse shadow-lg shadow-amber-500/30 text-lg active:scale-95 transition-transform"
+                           >
+                              Dichiara {achievedWin}!
+                           </button>
+                         )}
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
           </div>
 
           {role === 'Host' && (
@@ -363,7 +452,7 @@ const App: React.FC = () => {
                     Giocatori ({Object.keys(connections).length})
                   </h3>
                   <div className="flex items-center gap-1 text-[10px] font-bold text-emerald-500 bg-emerald-50 px-2 py-1 rounded">
-                    <Volume2 size={12} /> LIVE AUDIO
+                    <Volume2 size={12} /> LIVE SYNC
                   </div>
                 </div>
                 
@@ -380,21 +469,29 @@ const App: React.FC = () => {
                     </div>
                   ) : (
                     players.map(p => (
-                      <div key={p.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-blue-200 transition-all">
+                      <div key={p.id} className="flex items-center justify-between p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-blue-200 transition-all shadow-sm">
                         <div className="flex items-center gap-3">
-                          <div className="w-10 h-10 bg-gradient-to-tr from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-lg">
-                            {p.name.charAt(0).toUpperCase()}
+                          <div className="relative">
+                            <div className="w-11 h-11 bg-gradient-to-tr from-blue-500 to-indigo-600 rounded-xl flex items-center justify-center text-white font-bold text-lg shadow-sm">
+                              {p.name.charAt(0).toUpperCase()}
+                            </div>
+                            <div className="absolute -bottom-1 -right-1 w-3 h-3 bg-green-500 border-2 border-white rounded-full"></div>
                           </div>
                           <div>
-                            <p className="font-bold text-slate-800">{p.name}</p>
-                            <p className="text-[10px] text-slate-400 font-mono tracking-tighter">ID: {p.id.slice(-6)}</p>
+                            <p className="font-bold text-slate-800 text-sm leading-tight">{p.name}</p>
+                            <p className="text-[9px] text-slate-400 font-mono uppercase tracking-tighter">ID: {p.id.slice(-6)}</p>
                           </div>
                         </div>
-                        {p.lastWin !== 'None' && (
-                          <div className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[10px] font-black uppercase ring-1 ring-amber-200">
-                            {p.lastWin}
-                          </div>
-                        )}
+                        
+                        <div className="flex flex-col items-end gap-1">
+                          {p.lastWin !== 'None' ? (
+                            <div className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[10px] font-black uppercase ring-1 ring-amber-200 flex items-center gap-1 animate-pulse">
+                              <Trophy size={10} /> {p.lastWin}
+                            </div>
+                          ) : (
+                            <div className="text-[9px] font-bold text-slate-300 uppercase italic">Nessun punto</div>
+                          )}
+                        </div>
                       </div>
                     ))
                   )}
@@ -404,7 +501,7 @@ const App: React.FC = () => {
                    <div className="flex items-start gap-3">
                       <Info className="text-blue-600 mt-0.5" size={16} />
                       <p className="text-xs text-blue-700 leading-relaxed font-medium">
-                        I giocatori riceveranno i numeri istantaneamente. Assicurati che il volume del PC sia attivo per sentire l'estrazione!
+                        Vedi qui chi sta partecipando in tempo reale. In caso di Tombola, il sistema verificherà tutte le cartelle per eventuali vincite condivise.
                       </p>
                    </div>
                 </div>

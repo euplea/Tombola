@@ -2,6 +2,18 @@
 import { TombolaCard, CardCell, WinType } from '../types';
 
 /**
+ * Priority map for win types to ensure we always return the highest achieved win.
+ */
+const WIN_PRIORITY: Record<WinType, number> = {
+  'None': 0,
+  'Ambo': 1,
+  'Terno': 2,
+  'Quaterna': 3,
+  'Cinquina': 4,
+  'Tombola': 5
+};
+
+/**
  * Generates a standard Tombola card with 15 numbers (3 rows of 5)
  */
 export const generateCard = (): TombolaCard => {
@@ -19,12 +31,6 @@ export const generateCard = (): TombolaCard => {
   });
 
   // Assign 15 numbers (3 per row usually, but we need 5 per row)
-  const numberPositions: [number, number][] = [];
-  
-  // Rule: each row must have 5 numbers, each column must have at least 1 number
-  // Total numbers = 15
-  
-  // Simplified robust card gen:
   for (let r = 0; r < 3; r++) {
     const colsForRow = Array.from({ length: 9 }, (_, i) => i)
       .sort(() => Math.random() - 0.5)
@@ -37,7 +43,7 @@ export const generateCard = (): TombolaCard => {
     });
   }
 
-  // Sort columns
+  // Sort columns vertically to follow traditional Tombola layout rules
   for (let c = 0; c < 9; c++) {
     const vals = grid.map(row => row[c].value).filter(v => v !== null) as number[];
     vals.sort((a, b) => a - b);
@@ -52,29 +58,33 @@ export const generateCard = (): TombolaCard => {
   return { id, grid, lastWin: 'None' };
 };
 
-// Fix comparison error by checking win levels in ascending order and removing redundant checks
+/**
+ * Accurately detects the highest win type for a given card based on drawn numbers.
+ */
 export const checkWin = (card: TombolaCard, drawnNumbers: number[]): WinType => {
-  let maxWin: WinType = 'None';
-  let totalMarked = 0;
+  let highestWin: WinType = 'None';
+  let totalMarkedOnCard = 0;
 
   for (const row of card.grid) {
-    const markedInRow = row.filter(cell => cell.value && drawnNumbers.includes(cell.value)).length;
-    totalMarked += markedInRow;
+    const markedInRow = row.filter(cell => cell.value !== null && drawnNumbers.includes(cell.value)).length;
+    totalMarkedOnCard += markedInRow;
 
-    // Check for row-based wins in increasing order of priority
-    if (markedInRow === 2) {
-      if (maxWin === 'None') maxWin = 'Ambo';
-    } else if (markedInRow === 3) {
-      if (maxWin === 'None' || maxWin === 'Ambo') maxWin = 'Terno';
-    } else if (markedInRow === 4) {
-      if (maxWin === 'None' || maxWin === 'Ambo' || maxWin === 'Terno') maxWin = 'Quaterna';
-    } else if (markedInRow === 5) {
-      maxWin = 'Cinquina';
+    let currentRowWin: WinType = 'None';
+    if (markedInRow === 2) currentRowWin = 'Ambo';
+    else if (markedInRow === 3) currentRowWin = 'Terno';
+    else if (markedInRow === 4) currentRowWin = 'Quaterna';
+    else if (markedInRow === 5) currentRowWin = 'Cinquina';
+
+    // Update global highest win if this row has a better one
+    if (WIN_PRIORITY[currentRowWin] > WIN_PRIORITY[highestWin]) {
+      highestWin = currentRowWin;
     }
   }
 
-  // Tombola is the highest possible win
-  if (totalMarked === 15) return 'Tombola';
+  // Tombola is achieved if all 15 numbers on the card are marked
+  if (totalMarkedOnCard === 15) {
+    return 'Tombola';
+  }
   
-  return maxWin;
+  return highestWin;
 };

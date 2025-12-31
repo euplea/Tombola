@@ -22,6 +22,6 @@ export interface TombolaCard {
 }
 
 export interface PeerMessage {
-  type: 'DRAW_NUMBER' | 'WIN_CLAIM' | 'SYNC_STATE' | 'PLAYER_JOINED';
+  type: 'DRAW_NUMBER' | 'WIN_CLAIM' | 'SYNC_STATE' | 'PLAYER_JOINED' | 'CARD_SYNC';
   payload: any;
 }

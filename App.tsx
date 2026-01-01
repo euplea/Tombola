@@ -421,10 +421,15 @@ const App: React.FC = () => {
             </div>
           </div>
 
-          <footer className="text-center text-slate-500 text-sm flex items-center justify-center gap-4">
-             <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-green-500"></div> Peer-to-Peer Attivo</div>
-             <div className="h-4 w-px bg-slate-700"></div>
-             <div className="flex items-center gap-2"><Volume2 size={16} /> Chiamate Vocali in Italiano</div>
+          <footer className="text-center text-slate-500 text-sm space-y-4">
+             <div className="flex items-center justify-center gap-4">
+                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-green-500"></div> Peer-to-Peer Attivo</div>
+                <div className="h-4 w-px bg-slate-700"></div>
+                <div className="flex items-center gap-2"><Volume2 size={16} /> Chiamate Vocali in Italiano</div>
+             </div>
+             <div className="text-[10px] opacity-60 uppercase tracking-widest font-bold">
+               © 2026 Fabio Orengo • MIT License
+             </div>
           </footer>
         </div>
       </div>
@@ -646,6 +651,21 @@ const App: React.FC = () => {
           )}
         </div>
       </main>
+
+      <footer className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-32 pt-8 border-t border-slate-200">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4 text-slate-400 text-xs font-bold uppercase tracking-widest">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-green-500"></span>
+            Sistema Peer-to-Peer Attivo
+          </div>
+          <div>
+            © 2026 Fabio Orengo • MIT License
+          </div>
+          <div className="flex items-center gap-2">
+            <Volume2 size={14} /> Chiamate Vocali IT
+          </div>
+        </div>
+      </footer>
 
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-2xl border border-slate-200/50 px-10 py-4 rounded-full shadow-2xl flex items-center gap-12 z-50 ring-1 ring-white">
           <div className="flex flex-col items-center">

@@ -3,6 +3,7 @@ import { TOTAL_NUMBERS } from './constants';
 import { WinType, TombolaCard, GameRole, PlayerInfo, PeerMessage } from './types';
 import { generateCard, checkWin } from './utils/gameLogic';
 import { getSmorfiaMeaning } from './services/geminiService';
+import { saveSession, loadSession, clearSession } from './utils/sessionStorage';
 import MainBoard from './components/MainBoard';
 import TombolaCardUI from './components/TombolaCardUI';
 import GameManual from './components/GameManual';
@@ -13,24 +14,70 @@ import confetti from 'canvas-confetti';
 import { Peer } from 'peerjs';
 
 const App: React.FC = () => {
-  const [role, setRole] = useState<GameRole>('Selecting');
-  const [userName, setUserName] = useState('');
-  const [roomId, setRoomId] = useState('');
+  // Load session once on mount
+  const savedSession = React.useMemo(() => loadSession(), []);
+
+  const [role, setRole] = useState<GameRole>(savedSession?.role || 'Selecting');
+  const [userName, setUserName] = useState(savedSession?.userName || '');
+  const [roomId, setRoomId] = useState(savedSession?.roomId || '');
   const [peer, setPeer] = useState<Peer | null>(null);
   const [connections, setConnections] = useState<Record<string, any>>({});
-  const [players, setPlayers] = useState<PlayerInfo[]>([]);
+  const [players, setPlayers] = useState<PlayerInfo[]>(savedSession?.players || []);
   
-  const [drawnNumbers, setDrawnNumbers] = useState<number[]>([]);
-  const [lastDrawn, setLastDrawn] = useState<number | null>(null);
-  const [smorfia, setSmorfia] = useState<string | null>(null);
-  const [myCards, setMyCards] = useState<TombolaCard[]>([]);
+  const [drawnNumbers, setDrawnNumbers] = useState<number[]>(savedSession?.drawnNumbers || []);
+  const [lastDrawn, setLastDrawn] = useState<number | null>(savedSession?.lastDrawn || null);
+  const [smorfia, setSmorfia] = useState<string | null>(savedSession?.smorfia || null);
+  const [myCards, setMyCards] = useState<TombolaCard[]>(savedSession?.myCards || []);
   const [isAutoPlaying, setIsAutoPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showManual, setShowManual] = useState(false);
   const [showPrinter, setShowPrinter] = useState(false);
-  const [totalNetworkCards, setTotalNetworkCards] = useState(0);
+  const [totalNetworkCards, setTotalNetworkCards] = useState(savedSession?.totalNetworkCards || 0);
   
   const timerRef = useRef<any>(null);
+
+  // Session Persistence Effect
+  useEffect(() => {
+    if (role !== 'Selecting') {
+      saveSession({
+        role,
+        userName,
+        roomId,
+        myCards,
+        drawnNumbers,
+        lastDrawn,
+        smorfia,
+        players,
+        totalNetworkCards,
+        myPeerId: peer?.id
+      });
+    }
+  }, [role, userName, roomId, myCards, drawnNumbers, lastDrawn, smorfia, players, totalNetworkCards, peer?.id]);
+
+  // Session Recovery Effect (Auto-reconnect)
+  useEffect(() => {
+    if (savedSession && !peer && role !== 'Selecting') {
+      // Small delay to ensure previous socket cleanup if it was a reload
+      const timer = setTimeout(() => {
+        if (savedSession.role === 'Host') {
+          console.log("Restoring Host Session...", savedSession.roomId);
+          initPeer(savedSession.roomId);
+        } else if (savedSession.role === 'Player') {
+          console.log("Restoring Player Session...", savedSession.myPeerId);
+          initPeer(savedSession.myPeerId); 
+        }
+      }, 500);
+      return () => clearTimeout(timer);
+    }
+  }, []); // Run once on mount
+
+  // Player Auto-Connect after restore
+  useEffect(() => {
+    if (role === 'Player' && peer && !connections.host && savedSession?.roomId) {
+       console.log("Auto-connecting to host:", savedSession.roomId);
+       connectToHost(savedSession.roomId);
+    }
+  }, [peer, role, connections.host]);
 
   // Derived state for Total Cards (Host Logic vs Player Logic)
   const totalCardsInGame = role === 'Host' 
@@ -437,8 +484,9 @@ const App: React.FC = () => {
           )}
           
           <button 
-            onClick={() => window.location.reload()}
+            onClick={() => { clearSession(); window.location.reload(); }}
             className="p-2.5 bg-gray-100 text-gray-600 rounded-full hover:bg-gray-200"
+            title="Nuova Partita (Reset)"
           >
             <RotateCcw size={20} />
           </button>

@@ -7,22 +7,15 @@
 
 ---
 
-## 🚀 Come Pubblicare il Gioco (Gratis per Amici e Parenti)
+## 🚀 Pubblicazione (Deployment)
 
-Il metodo più veloce e semplice per mettere il gioco online senza costi è usare **Netlify Drop**.
+Per istruzioni dettagliate su come mettere il gioco online usando **Netlify**, **GitHub Pages** o **Vercel**, leggi la guida dedicata:
 
-### 1. Prepara il file
-Apri il terminale nella cartella del progetto ed esegui questo comando per creare la versione ottimizzata del gioco:
-```bash
-npm run build
-```
-Verrà creata una cartella chiamata **`dist`** nel tuo progetto.
+👉 **[LEGGI LA GUIDA AL DEPLOYMENT](./DEPLOYMENT.md)**
 
-### 2. Pubblica
-1.  Vai sul sito [Netlify Drop](https://app.netlify.com/drop).
-2.  Prendi la cartella **`dist`** e trascinala dentro il box nel browser.
-3.  Attendi qualche secondo. Il gioco è online!
-4.  Copia il link (es. `tua-tombola.netlify.app`) e invialo ai tuoi amici su WhatsApp.
+Il metodo più veloce per iniziare resta **Netlify Drop**:
+1. Esegui `npm run build`
+2. Trascina la cartella `dist` su [Netlify Drop](https://app.netlify.com/drop).
 
 ---
 

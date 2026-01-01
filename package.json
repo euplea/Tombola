@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "homepage": "https://euplea.github.io/tombola-royale",
+  "homepage": "https://euplea.github.io/Tombola",
   "scripts": {
     "dev": "vite",
     "build": "vite build",

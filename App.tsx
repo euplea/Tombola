@@ -1,9 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TOTAL_NUMBERS } from './constants';
 import { WinType, TombolaCard, GameRole, PlayerInfo, PeerMessage } from './types';
-import { WinType, TombolaCard, GameRole, PlayerInfo, PeerMessage } from './types';
 import { generateCard, checkWin, WIN_PRIORITY } from './utils/gameLogic';
-import { getSmorfiaMeaning } from './services/geminiService';
 import { getSmorfiaMeaning } from './services/geminiService';
 import { saveSession, loadSession, clearSession } from './utils/sessionStorage';
 import MainBoard from './components/MainBoard';
@@ -35,12 +33,12 @@ const App: React.FC = () => {
   const [showManual, setShowManual] = useState(false);
   const [showPrinter, setShowPrinter] = useState(false);
   const [totalNetworkCards, setTotalNetworkCards] = useState(savedSession?.totalNetworkCards || 0);
-  const [totalNetworkCards, setTotalNetworkCards] = useState(savedSession?.totalNetworkCards || 0);
   const [isJoining, setIsJoining] = useState(false);
 
   // State for Strict Rules
   const [currentWinLevel, setCurrentWinLevel] = useState<WinType>('None');
   const [winLevelTurnIndex, setWinLevelTurnIndex] = useState<number>(-1);
+  const [drawSpeed, setDrawSpeed] = useState<number>(5000); // Default 5 seconds
 
   const timerRef = useRef<any>(null);
 
@@ -362,12 +360,14 @@ const App: React.FC = () => {
 
   useEffect(() => {
     if (isAutoPlaying && role === 'Host') {
-      timerRef.current = setInterval(drawNumber, 5000);
+      // Clear existing to ensure speed update takes effect immediately if playing
+      if (timerRef.current) clearInterval(timerRef.current);
+      timerRef.current = setInterval(drawNumber, drawSpeed);
     } else {
       if (timerRef.current) clearInterval(timerRef.current);
     }
     return () => clearInterval(timerRef.current);
-  }, [isAutoPlaying, drawNumber, role]);
+  }, [isAutoPlaying, drawNumber, role, drawSpeed]);
 
   const claimWin = (winType: WinType) => {
     if (role === 'Player' && connections.host) {
@@ -557,6 +557,19 @@ const App: React.FC = () => {
               >
                 {isAutoPlaying ? <Pause size={18} /> : <Play size={18} />}
               </button>
+
+              <div className="flex flex-col items-center ml-2 bg-slate-50 px-3 py-1 rounded-lg border border-slate-200">
+                <span className="text-[9px] uppercase font-bold text-slate-400 leading-none mb-1">Velocità ({drawSpeed / 1000}s)</span>
+                <input
+                  type="range"
+                  min="2000"
+                  max="10000"
+                  step="500"
+                  value={drawSpeed}
+                  onChange={(e) => setDrawSpeed(Number(e.target.value))}
+                  className="w-24 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-red-600"
+                />
+              </div>
             </>
           )}
 

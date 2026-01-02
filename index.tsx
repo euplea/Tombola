@@ -1,4 +1,9 @@
 
+/**
+ * Copyright (c) 2026 Fabio Orengo. All rights reserved.
+ * Licensed under the MIT License.
+ */
+
 import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';

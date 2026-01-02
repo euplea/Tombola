@@ -1,4 +1,9 @@
 
+/**
+ * Copyright (c) 2026 Fabio Orengo. All rights reserved.
+ * Licensed under the MIT License.
+ */
+
 export const TOTAL_NUMBERS = 90;
 export const WIN_LABELS: Record<string, string> = {
   Ambo: 'Ambo! (2)',

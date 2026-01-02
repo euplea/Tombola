@@ -1,4 +1,9 @@
 
+/**
+ * Copyright (c) 2026 Fabio Orengo. All rights reserved.
+ * Licensed under the MIT License.
+ */
+
 export type WinType = 'None' | 'Ambo' | 'Terno' | 'Quaterna' | 'Cinquina' | 'Tombola';
 
 export type GameRole = 'Host' | 'Player' | 'Selecting';

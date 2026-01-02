@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 Fabio Orengo. All rights reserved.
+ * Licensed under the MIT License.
+ */
+
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 

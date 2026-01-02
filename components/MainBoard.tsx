@@ -1,4 +1,9 @@
 
+/**
+ * Copyright (c) 2026 Fabio Orengo. All rights reserved.
+ * Licensed under the MIT License.
+ */
+
 import React from 'react';
 
 interface MainBoardProps {
@@ -17,15 +22,15 @@ const MainBoard: React.FC<MainBoardProps> = ({ drawnNumbers, lastDrawn }) => {
         {Array.from({ length: 90 }, (_, i) => i + 1).map((num) => {
           const isDrawn = drawnNumbers.includes(num);
           const isLast = lastDrawn === num;
-          
+
           return (
             <div
               key={num}
               className={`
                 aspect-square flex items-center justify-center rounded-lg text-sm font-bold transition-all duration-300
-                ${isLast ? 'bg-amber-400 text-white scale-110 shadow-lg z-10 animate-pulse' : 
-                  isDrawn ? 'bg-emerald-500 text-white shadow-sm' : 
-                  'bg-gray-50 text-gray-300 border border-gray-100'}
+                ${isLast ? 'bg-amber-400 text-white scale-110 shadow-lg z-10 animate-pulse' :
+                  isDrawn ? 'bg-emerald-500 text-white shadow-sm' :
+                    'bg-gray-50 text-gray-300 border border-gray-100'}
               `}
             >
               {num}

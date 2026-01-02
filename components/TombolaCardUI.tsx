@@ -1,4 +1,9 @@
 
+/**
+ * Copyright (c) 2026 Fabio Orengo. All rights reserved.
+ * Licensed under the MIT License.
+ */
+
 import React from 'react';
 import { TombolaCard } from '../types';
 import { WIN_LABELS } from '../constants';
@@ -37,7 +42,7 @@ const TombolaCardUI: React.FC<CardProps> = ({ card, drawnNumbers }) => {
           </span>
         )}
       </div>
-      
+
       {/* Card Grid Container - Simulates the physical card tray */}
       <div className="grid grid-rows-3 gap-2 bg-slate-50 p-2 rounded-lg border border-slate-100">
         {card.grid.map((row, rIdx) => (
@@ -52,9 +57,9 @@ const TombolaCardUI: React.FC<CardProps> = ({ card, drawnNumbers }) => {
                   className={`
                     relative flex items-center justify-center rounded-md text-lg font-bold select-none overflow-hidden
                     ${cell.value === null ? 'bg-transparent' : 'shadow-sm border border-slate-200/60'}
-                    ${isMarked 
-                        ? 'bg-gradient-to-b from-red-500 to-red-600 text-white border-red-700 shadow-inner' 
-                        : 'bg-white text-slate-700 hover:bg-slate-50'}
+                    ${isMarked
+                      ? 'bg-gradient-to-b from-red-500 to-red-600 text-white border-red-700 shadow-inner'
+                      : 'bg-white text-slate-700 hover:bg-slate-50'}
                     ${isJustMarked ? 'animate-stamp z-10 ring-2 ring-red-300 ring-offset-1' : 'transition-all duration-300'}
                   `}
                 >
@@ -62,7 +67,7 @@ const TombolaCardUI: React.FC<CardProps> = ({ card, drawnNumbers }) => {
                   {isMarked && (
                     <div className="absolute inset-0 bg-gradient-to-br from-white/30 to-transparent pointer-events-none"></div>
                   )}
-                  
+
                   {/* The Number */}
                   <span className={isMarked ? 'drop-shadow-md transform scale-105' : ''}>
                     {cell.value}

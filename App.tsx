@@ -1,3 +1,8 @@
+/**
+ * Copyright (c) 2026 Fabio Orengo. All rights reserved.
+ * Licensed under the MIT License.
+ */
+
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TOTAL_NUMBERS } from './constants';
 import { WinType, TombolaCard, GameRole, PlayerInfo, PeerMessage } from './types';

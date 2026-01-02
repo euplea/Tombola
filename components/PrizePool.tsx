@@ -1,4 +1,9 @@
 
+/**
+ * Copyright (c) 2026 Fabio Orengo. All rights reserved.
+ * Licensed under the MIT License.
+ */
+
 import React from 'react';
 import { Coins, Trophy } from 'lucide-react';
 
@@ -41,7 +46,7 @@ const PrizePool: React.FC<PrizePoolProps> = ({ totalCards }) => {
           Montepremi <span className="text-sm font-normal text-slate-500">({totalCards} cartelle in gioco)</span>
         </h3>
         <div className="text-2xl font-black text-slate-800 bg-white px-4 py-1 rounded-lg border border-slate-200 shadow-sm">
-           {totalPot} <span className="text-xs font-bold text-yellow-600 uppercase">Token</span>
+          {totalPot} <span className="text-xs font-bold text-yellow-600 uppercase">Token</span>
         </div>
       </div>
 
@@ -51,18 +56,18 @@ const PrizePool: React.FC<PrizePoolProps> = ({ totalCards }) => {
         <PrizeCard label="Quaterna" amount={prizes.quaterna} colorClass="border-slate-100" />
         <PrizeCard label="Cinquina" amount={prizes.cinquina} colorClass="border-slate-100" />
         <div className="flex flex-col items-center justify-center p-3 rounded-xl border-2 border-yellow-400 bg-yellow-50 shadow-md min-w-[100px] flex-[1.5] relative overflow-hidden">
-            <div className="absolute top-0 right-0 p-1">
-                <Trophy size={12} className="text-yellow-600" />
-            </div>
-            <span className="text-[10px] uppercase font-bold text-yellow-700 mb-1 tracking-widest">Tombola</span>
-            <div className="text-2xl font-black text-yellow-600 flex items-center gap-1">
-                {prizes.tombola}
-            </div>
+          <div className="absolute top-0 right-0 p-1">
+            <Trophy size={12} className="text-yellow-600" />
+          </div>
+          <span className="text-[10px] uppercase font-bold text-yellow-700 mb-1 tracking-widest">Tombola</span>
+          <div className="text-2xl font-black text-yellow-600 flex items-center gap-1">
+            {prizes.tombola}
+          </div>
         </div>
       </div>
       <div className="mt-3 text-center">
         <p className="text-[10px] text-slate-400">
-            Il montepremi è generato astrattamente: <span className="font-bold text-slate-600">{TOKEN_COST} Token</span> per ogni cartella acquistata.
+          Il montepremi è generato astrattamente: <span className="font-bold text-slate-600">{TOKEN_COST} Token</span> per ogni cartella acquistata.
         </p>
       </div>
     </div>

@@ -4,7 +4,7 @@ import { TombolaCard, CardCell, WinType } from '../types';
 /**
  * Priority map for win types to ensure we always return the highest achieved win.
  */
-const WIN_PRIORITY: Record<WinType, number> = {
+export const WIN_PRIORITY: Record<WinType, number> = {
   'None': 0,
   'Ambo': 1,
   'Terno': 2,
@@ -18,7 +18,7 @@ const WIN_PRIORITY: Record<WinType, number> = {
  */
 export const generateCard = (): TombolaCard => {
   const id = Math.random().toString(36).substr(2, 9);
-  const grid: CardCell[][] = Array.from({ length: 3 }, () => 
+  const grid: CardCell[][] = Array.from({ length: 3 }, () =>
     Array.from({ length: 9 }, () => ({ value: null, marked: false }))
   );
 
@@ -36,7 +36,7 @@ export const generateCard = (): TombolaCard => {
       .sort(() => Math.random() - 0.5)
       .slice(0, 5)
       .sort((a, b) => a - b);
-    
+
     colsForRow.forEach(c => {
       const val = columns[c].pop()!;
       grid[r][c].value = val;
@@ -85,6 +85,6 @@ export const checkWin = (card: TombolaCard, drawnNumbers: number[]): WinType => 
   if (totalMarkedOnCard === 15) {
     return 'Tombola';
   }
-  
+
   return highestWin;
 };

@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { TOTAL_NUMBERS } from './constants';
 import { WinType, TombolaCard, GameRole, PlayerInfo, PeerMessage } from './types';
-import { generateCard, checkWin } from './utils/gameLogic';
+import { WinType, TombolaCard, GameRole, PlayerInfo, PeerMessage } from './types';
+import { generateCard, checkWin, WIN_PRIORITY } from './utils/gameLogic';
+import { getSmorfiaMeaning } from './services/geminiService';
 import { getSmorfiaMeaning } from './services/geminiService';
 import { saveSession, loadSession, clearSession } from './utils/sessionStorage';
 import MainBoard from './components/MainBoard';
@@ -23,7 +25,7 @@ const App: React.FC = () => {
   const [peer, setPeer] = useState<Peer | null>(null);
   const [connections, setConnections] = useState<Record<string, any>>({});
   const [players, setPlayers] = useState<PlayerInfo[]>(savedSession?.players || []);
-  
+
   const [drawnNumbers, setDrawnNumbers] = useState<number[]>(savedSession?.drawnNumbers || []);
   const [lastDrawn, setLastDrawn] = useState<number | null>(savedSession?.lastDrawn || null);
   const [smorfia, setSmorfia] = useState<string | null>(savedSession?.smorfia || null);
@@ -33,7 +35,13 @@ const App: React.FC = () => {
   const [showManual, setShowManual] = useState(false);
   const [showPrinter, setShowPrinter] = useState(false);
   const [totalNetworkCards, setTotalNetworkCards] = useState(savedSession?.totalNetworkCards || 0);
-  
+  const [totalNetworkCards, setTotalNetworkCards] = useState(savedSession?.totalNetworkCards || 0);
+  const [isJoining, setIsJoining] = useState(false);
+
+  // State for Strict Rules
+  const [currentWinLevel, setCurrentWinLevel] = useState<WinType>('None');
+  const [winLevelTurnIndex, setWinLevelTurnIndex] = useState<number>(-1);
+
   const timerRef = useRef<any>(null);
 
   // Session Persistence Effect
@@ -61,10 +69,10 @@ const App: React.FC = () => {
       const timer = setTimeout(() => {
         if (savedSession.role === 'Host') {
           console.log("Restoring Host Session...", savedSession.roomId);
-          initPeer(savedSession.roomId);
+          initPeer(savedSession.roomId, true);
         } else if (savedSession.role === 'Player') {
           console.log("Restoring Player Session...", savedSession.myPeerId);
-          initPeer(savedSession.myPeerId); 
+          initPeer(savedSession.myPeerId, false);
         }
       }, 500);
       return () => clearTimeout(timer);
@@ -74,13 +82,22 @@ const App: React.FC = () => {
   // Player Auto-Connect after restore
   useEffect(() => {
     if (role === 'Player' && peer && !connections.host && savedSession?.roomId) {
-       console.log("Auto-connecting to host:", savedSession.roomId);
-       connectToHost(savedSession.roomId);
+      console.log("Auto-connecting to host:", savedSession.roomId);
+      connectToHost(savedSession.roomId);
     }
   }, [peer, role, connections.host]);
 
+  // Robust Join Logic (Wait for Peer to be ready)
+  useEffect(() => {
+    if (isJoining && peer && roomId) {
+      console.log("Peer ready, connecting to:", roomId);
+      connectToHost(roomId.toUpperCase());
+      setIsJoining(false);
+    }
+  }, [isJoining, peer, roomId]);
+
   // Derived state for Total Cards (Host Logic vs Player Logic)
-  const totalCardsInGame = role === 'Host' 
+  const totalCardsInGame = role === 'Host'
     ? myCards.length + players.reduce((acc, p) => acc + p.cards.length, 0)
     : totalNetworkCards;
 
@@ -91,30 +108,29 @@ const App: React.FC = () => {
     const utterance = new SpeechSynthesisUtterance(text);
     utterance.lang = 'it-IT';
     utterance.rate = 0.9; // Slightly slower for clarity
-    
+
     // Find an Italian voice if possible
     const voices = window.speechSynthesis.getVoices();
     const italianVoice = voices.find(v => v.lang.startsWith('it'));
     if (italianVoice) utterance.voice = italianVoice;
-    
+
     window.speechSynthesis.speak(utterance);
   };
 
   // Simplified Room ID generation
   const generateSimpleRoomId = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let result = 'TOMBOLA-';
-    for (let i = 0; i < 4; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
+    // Generate T + 3 digits (e.g. T123)
+    const num = Math.floor(Math.random() * 900) + 100; // 100 to 999
+    return `T${num}`;
   };
 
   // Initialize Peer
-  const initPeer = (customId?: string) => {
+  const initPeer = (customId?: string, updateRoomId: boolean = true) => {
     const p = new Peer(customId);
     p.on('open', (id: string) => {
-      setRoomId(id);
+      if (updateRoomId) {
+        setRoomId(id);
+      }
       setPeer(p);
     });
     p.on('error', (err: any) => {
@@ -143,7 +159,7 @@ const App: React.FC = () => {
 
       const randomInRange = (min: number, max: number) => Math.random() * (max - min) + min;
 
-      const interval: any = setInterval(function() {
+      const interval: any = setInterval(function () {
         const timeLeft = animationEnd - Date.now();
 
         if (timeLeft <= 0) {
@@ -169,6 +185,37 @@ const App: React.FC = () => {
 
   // Handle Win Claims Logic (Unified verification for 'Tombola')
   const handleWinClaim = useCallback((claimantId: string, claimantName: string, winType: WinType) => {
+    // STRICT VALIDATION
+    const currentPriority = WIN_PRIORITY[currentWinLevel];
+    const claimedPriority = WIN_PRIORITY[winType];
+    const currentTurn = drawnNumbers.length;
+
+    // Case 1: Attempting to claim a lower or equal prize that was ALREADY closed in a previous turn
+    if (claimedPriority <= currentPriority) {
+      if (winLevelTurnIndex !== -1 && winLevelTurnIndex < currentTurn) {
+        const message = `Troppo tardi! Il premio ${winType} è stato assegnato nel turno precedente.`;
+        speakItalian(message);
+        // Inform specific user if possible, or just ignore
+        return;
+      }
+
+      // Case 1b: Claiming same level on SAME turn (Shared Win) -> VALID
+      if (claimedPriority === currentPriority && winLevelTurnIndex === currentTurn) {
+        // Proceed to shared win logic
+      } else if (claimedPriority < currentPriority) {
+        // Trying to go back (e.g. claim Ambo when we are at Terno)
+        return;
+      }
+    }
+
+    // Check if new level reached
+    const isNewLevel = claimedPriority > currentPriority;
+
+    if (isNewLevel) {
+      setCurrentWinLevel(winType);
+      setWinLevelTurnIndex(currentTurn);
+    }
+
     // Trigger visual effect immediately
     triggerWinEffect(winType);
 
@@ -201,20 +248,20 @@ const App: React.FC = () => {
       }
 
       // Update state for all verified winners in player list
-      setPlayers(prev => prev.map(p => 
+      setPlayers(prev => prev.map(p =>
         winners.includes(p.name) ? { ...p, lastWin: 'Tombola' } : p
       ));
     } else {
       // Standard announcement for Ambo, Terno, etc.
       speakItalian(`Attenzione! ${claimantName} ha fatto ${winType}!`);
-      
-      setPlayers(prev => prev.map(p => 
+
+      setPlayers(prev => prev.map(p =>
         p.id === claimantId ? { ...p, lastWin: winType } : p
       ));
-      
+
       alert(`${claimantName} dichiara: ${winType}!`);
     }
-  }, [userName, myCards, players, drawnNumbers]);
+  }, [userName, myCards, players, drawnNumbers, currentWinLevel, winLevelTurnIndex]);
 
   // Host Logic
   useEffect(() => {
@@ -224,7 +271,7 @@ const App: React.FC = () => {
           setConnections(prev => ({ ...prev, [conn.peer]: conn }));
           conn.send({
             type: 'SYNC_STATE',
-            payload: { drawnNumbers, lastDrawn, smorfia, totalCards: totalCardsInGame }
+            payload: { drawnNumbers, lastDrawn, smorfia, totalCards: totalCardsInGame, currentWinLevel }
           });
         });
 
@@ -237,7 +284,7 @@ const App: React.FC = () => {
             });
           }
           if (data.type === 'CARD_SYNC') {
-            setPlayers(prev => prev.map(p => 
+            setPlayers(prev => prev.map(p =>
               p.id === conn.peer ? { ...p, cards: data.payload.cards } : p
             ));
           }
@@ -274,11 +321,12 @@ const App: React.FC = () => {
 
     conn.on('data', (data: PeerMessage) => {
       if (data.type === 'SYNC_STATE' || data.type === 'DRAW_NUMBER') {
-        const { drawnNumbers: syncedDrawn, lastDrawn: syncedLast, smorfia: syncedSmorfia, totalCards } = data.payload;
+        const { drawnNumbers: syncedDrawn, lastDrawn: syncedLast, smorfia: syncedSmorfia, totalCards, currentWinLevel: syncedWinLevel } = data.payload;
         setDrawnNumbers(syncedDrawn);
         setLastDrawn(syncedLast);
         setSmorfia(syncedSmorfia);
         if (totalCards !== undefined) setTotalNetworkCards(totalCards);
+        if (syncedWinLevel) setCurrentWinLevel(syncedWinLevel);
       }
     });
   };
@@ -292,7 +340,7 @@ const App: React.FC = () => {
 
     const available = Array.from({ length: TOTAL_NUMBERS }, (_, i) => i + 1)
       .filter(n => !drawnNumbers.includes(n));
-    
+
     const next = available[Math.floor(Math.random() * available.length)];
     const newDrawn = [...drawnNumbers, next];
     const meaning = await getSmorfiaMeaning(next);
@@ -307,7 +355,7 @@ const App: React.FC = () => {
     Object.values(connections).forEach((conn: any) => {
       conn.send({
         type: 'DRAW_NUMBER',
-        payload: { drawnNumbers: newDrawn, lastDrawn: next, smorfia: meaning, totalCards: totalCardsInGame }
+        payload: { drawnNumbers: newDrawn, lastDrawn: next, smorfia: meaning, totalCards: totalCardsInGame, currentWinLevel }
       });
     });
   }, [drawnNumbers, connections, totalCardsInGame]);
@@ -330,32 +378,33 @@ const App: React.FC = () => {
     } else if (role === 'Host') {
       // If host claims, use the shared win detection logic immediately
       handleWinClaim(peer?.id || 'host', userName, winType);
-      
+
       setMyCards(prev => prev.map(c => {
-         const currentWin = checkWin(c, drawnNumbers);
-         if (currentWin === winType) return { ...c, lastWin: winType };
-         return c;
+        const currentWin = checkWin(c, drawnNumbers);
+        if (currentWin === winType) return { ...c, lastWin: winType };
+        return c;
       }));
     }
   };
 
   const handleStartHost = () => {
     if (!userName) return alert('Inserisci il tuo nome');
-    initPeer(generateSimpleRoomId());
+    initPeer(generateSimpleRoomId(), true);
     setRole('Host');
   };
 
   const handleJoinGame = () => {
     if (!userName || !roomId) return alert('Inserisci nome e Codice Tombola');
-    initPeer();
-    setTimeout(() => connectToHost(roomId.toUpperCase()), 1000);
+    setIsJoining(true);
+    initPeer(undefined, false);
+    // Connection happens in useEffect once peer is ready
   };
 
   if (role === 'Selecting') {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-6 text-white font-sans overflow-hidden">
         <div className="absolute top-0 left-0 w-full h-full opacity-20 pointer-events-none bg-[radial-gradient(circle_at_50%_50%,rgba(220,38,38,0.3),transparent_70%)]"></div>
-        
+
         <div className="max-w-4xl w-full z-10 space-y-12">
           <header className="text-center space-y-4">
             <h1 className="text-6xl font-serif font-black tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-red-500 to-amber-500">
@@ -371,17 +420,19 @@ const App: React.FC = () => {
               </div>
               <h2 className="text-2xl font-bold mb-4">Crea Partita</h2>
               <p className="text-slate-400 mb-8">Gestisci il tabellone principale. La tua voce chiamerà i numeri in Italiano.</p>
-              
+
               <div className="space-y-4">
-                <input 
-                  type="text" 
-                  placeholder="Tuo Nome (Host)" 
+                <input
+                  type="text"
+                  placeholder="Tuo Nome (Host)"
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-red-500 outline-none transition-all"
                   value={userName}
                   onChange={e => setUserName(e.target.value)}
+                  data-testid="host-name-input"
                 />
-                <button 
+                <button
                   onClick={handleStartHost}
+                  data-testid="create-room-btn"
                   className="w-full bg-red-600 hover:bg-red-700 py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-red-900/20"
                 >
                   Crea Stanza <ArrowRight size={20} />
@@ -395,24 +446,27 @@ const App: React.FC = () => {
               </div>
               <h2 className="text-2xl font-bold mb-4">Partecipa</h2>
               <p className="text-slate-400 mb-8">Inserisci il "Codice Network" mostrato sull'host per ricevere le tue cartelle digitali.</p>
-              
+
               <div className="space-y-4">
-                <input 
-                  type="text" 
-                  placeholder="Tuo Nome" 
+                <input
+                  type="text"
+                  placeholder="Tuo Nome"
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-amber-500 outline-none transition-all mb-2"
                   value={userName}
                   onChange={e => setUserName(e.target.value)}
+                  data-testid="player-name-input"
                 />
-                <input 
-                  type="text" 
-                  placeholder="Codice Tombola (es. TOMBOLA-ABCD)" 
+                <input
+                  type="text"
+                  placeholder="Codice Tombola (es. TOMBOLA-ABCD)"
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-amber-500 outline-none transition-all"
                   value={roomId}
                   onChange={e => setRoomId(e.target.value)}
+                  data-testid="room-id-input"
                 />
-                <button 
+                <button
                   onClick={handleJoinGame}
+                  data-testid="join-game-btn"
                   className="w-full bg-amber-500 hover:bg-amber-600 py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-amber-900/20"
                 >
                   Entra <Wifi size={20} />
@@ -422,14 +476,14 @@ const App: React.FC = () => {
           </div>
 
           <footer className="text-center text-slate-500 text-sm space-y-4">
-             <div className="flex items-center justify-center gap-4">
-                <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-green-500"></div> Peer-to-Peer Attivo</div>
-                <div className="h-4 w-px bg-slate-700"></div>
-                <div className="flex items-center gap-2"><Volume2 size={16} /> Chiamate Vocali in Italiano</div>
-             </div>
-             <div className="text-[10px] opacity-60 uppercase tracking-widest font-bold">
-               © 2026 Fabio Orengo • MIT License
-             </div>
+            <div className="flex items-center justify-center gap-4">
+              <div className="flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-green-500"></div> Peer-to-Peer Attivo</div>
+              <div className="h-4 w-px bg-slate-700"></div>
+              <div className="flex items-center gap-2"><Volume2 size={16} /> Chiamate Vocali in Italiano</div>
+            </div>
+            <div className="text-[10px] opacity-60 uppercase tracking-widest font-bold">
+              © 2026 Fabio Orengo • MIT License
+            </div>
           </footer>
         </div>
       </div>
@@ -440,7 +494,7 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
       {/* Manual Modal */}
       {showManual && <GameManual onClose={() => setShowManual(false)} />}
-      
+
       {/* Printer Modal */}
       {showPrinter && <PrintableCards onClose={() => setShowPrinter(false)} />}
 
@@ -450,45 +504,63 @@ const App: React.FC = () => {
           <h1 className="text-2xl font-serif font-bold tracking-tight text-red-700 hidden sm:block">Tombola Royale</h1>
           <div className="ml-4 px-3 py-1 bg-slate-100 rounded-lg text-[10px] font-mono font-bold text-slate-500 flex items-center gap-2 uppercase tracking-widest">
             <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-            {role === 'Host' ? 'Annunciatore' : 'Giocatore'}
+            {role === 'Host' ? <span data-testid="role-host">Annunciatore</span> : <span data-testid="role-player">Giocatore</span>}
+          </div>
+
+          <div className="ml-2 px-3 py-1 bg-gradient-to-r from-amber-200 to-yellow-400 rounded-lg text-amber-900 border border-amber-300 shadow-sm flex items-center gap-2">
+            <Trophy size={14} className="text-amber-800" />
+            <div className="flex flex-col leading-none">
+              <span className="text-[8px] uppercase font-black opacity-60 tracking-widest">Obiettivo</span>
+              <span className="text-xs font-black uppercase tracking-wider">
+                {(() => {
+                  const priority = WIN_PRIORITY[currentWinLevel];
+                  if (priority === 0) return 'Ambo';
+                  if (priority === 1) return 'Terno';
+                  if (priority === 2) return 'Quaterna';
+                  if (priority === 3) return 'Cinquina';
+                  if (priority === 4) return 'Tombola';
+                  return 'Tombola';
+                })()}
+              </span>
+            </div>
           </div>
         </div>
 
         <div className="flex items-center gap-3">
           <div className="hidden lg:flex flex-col items-end mr-4">
             <span className="text-[10px] uppercase text-slate-400 font-bold tracking-widest">Codice Network</span>
-            <span className="font-mono font-black text-slate-900 bg-amber-100 px-3 py-0.5 rounded-lg border border-amber-200">{roomId || '...'}</span>
+            <span data-testid="host-room-id" className="font-mono font-black text-slate-900 bg-amber-100 px-3 py-0.5 rounded-lg border border-amber-200">{roomId || '...'}</span>
           </div>
 
           {/* Host Tools */}
           {role === 'Host' && (
             <>
-                <button 
+              <button
                 onClick={() => setShowPrinter(true)}
                 className="p-2.5 bg-purple-50 text-purple-600 rounded-full hover:bg-purple-100 transition-colors mr-1"
                 title="Stampa Cartelle"
-                >
+              >
                 <Printer size={20} />
-                </button>
+              </button>
 
-                <button 
+              <button
                 onClick={() => setShowManual(true)}
                 className="p-2.5 bg-blue-50 text-blue-600 rounded-full hover:bg-blue-100 transition-colors mr-1"
                 title="Apri Manuale"
-                >
+              >
                 <BookOpen size={20} />
-                </button>
+              </button>
 
-                <button 
+              <button
                 onClick={() => setIsAutoPlaying(!isAutoPlaying)}
                 className={`flex items-center gap-2 px-5 py-2.5 rounded-full font-bold transition-all ${isAutoPlaying ? 'bg-amber-100 text-amber-700' : 'bg-red-600 text-white shadow-md'}`}
-                >
+              >
                 {isAutoPlaying ? <Pause size={18} /> : <Play size={18} />}
-                </button>
+              </button>
             </>
           )}
-          
-          <button 
+
+          <button
             onClick={() => { clearSession(); window.location.reload(); }}
             className="p-2.5 bg-gray-100 text-gray-600 rounded-full hover:bg-gray-200"
             title="Nuova Partita (Reset)"
@@ -500,9 +572,9 @@ const App: React.FC = () => {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         <div className={`grid grid-cols-1 ${role === 'Host' ? 'lg:grid-cols-3' : 'lg:grid-cols-1'} gap-8`}>
-          
+
           <div className={`${role === 'Host' ? 'lg:col-span-2' : 'max-w-4xl mx-auto w-full'} space-y-8`}>
-            
+
             <div className="bg-gradient-to-br from-red-600 to-red-800 rounded-[2rem] p-8 text-white shadow-2xl relative overflow-hidden flex flex-col items-center justify-center min-h-[260px] border-b-8 border-red-900/30">
               {lastDrawn ? (
                 <div className="text-center z-10 animate-in fade-in zoom-in duration-300">
@@ -534,20 +606,20 @@ const App: React.FC = () => {
             <div className="space-y-6">
               <div className="flex items-center justify-between">
                 <h2 className="text-3xl font-bold text-slate-800">
-                    {role === 'Host' ? 'Le Mie Cartelle (Host)' : 'Le Mie Cartelle'}
+                  {role === 'Host' ? 'Le Mie Cartelle (Host)' : 'Le Mie Cartelle'}
                 </h2>
-                <button 
+                <button
                   onClick={() => setMyCards([...myCards, generateCard()])}
                   className="flex items-center gap-2 px-6 py-3 bg-emerald-500 text-white rounded-2xl font-bold shadow-lg shadow-emerald-900/20 hover:bg-emerald-600 transition-all active:scale-95"
                 >
-                  <Plus size={20} /> 
+                  <Plus size={20} />
                   <span className="flex flex-col items-start leading-none">
-                     <span>Compra Cartella</span>
-                     <span className="text-[10px] opacity-80 font-mono">-10 Token</span>
+                    <span>Compra Cartella</span>
+                    <span className="text-[10px] opacity-80 font-mono">-10 Token</span>
                   </span>
                 </button>
               </div>
-              
+
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {myCards.length === 0 ? (
                   <div className="md:col-span-2 py-12 bg-white rounded-3xl border-2 border-dashed border-slate-200 flex flex-col items-center justify-center text-slate-400">
@@ -562,15 +634,15 @@ const App: React.FC = () => {
 
                     return (
                       <div key={card.id} className="space-y-4">
-                         <TombolaCardUI card={card} drawnNumbers={drawnNumbers} />
-                         {canClaim && (
-                           <button 
-                              onClick={() => claimWin(achievedWin)}
-                              className="w-full py-4 bg-amber-500 text-white font-black rounded-xl uppercase tracking-widest animate-pulse shadow-lg shadow-amber-500/30 text-lg active:scale-95 transition-transform"
-                           >
-                              Dichiara {achievedWin}!
-                           </button>
-                         )}
+                        <TombolaCardUI card={card} drawnNumbers={drawnNumbers} />
+                        {canClaim && (
+                          <button
+                            onClick={() => claimWin(achievedWin)}
+                            className="w-full py-4 bg-amber-500 text-white font-black rounded-xl uppercase tracking-widest animate-pulse shadow-lg shadow-amber-500/30 text-lg active:scale-95 transition-transform"
+                          >
+                            Dichiara {achievedWin}!
+                          </button>
+                        )}
                       </div>
                     );
                   })
@@ -591,7 +663,7 @@ const App: React.FC = () => {
                     <Volume2 size={12} /> LIVE SYNC
                   </div>
                 </div>
-                
+
                 <div className="space-y-3">
                   {Object.keys(connections).length === 0 ? (
                     <div className="text-center py-12 px-4">
@@ -616,14 +688,14 @@ const App: React.FC = () => {
                           <div>
                             <p className="font-bold text-slate-800 text-sm leading-tight">{p.name}</p>
                             <div className="flex items-center gap-2 mt-0.5">
-                                <p className="text-[9px] text-slate-400 font-mono uppercase tracking-tighter">ID: {p.id.slice(-6)}</p>
-                                <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
-                                    {p.cards.length} Cartelle
-                                </span>
+                              <p className="text-[9px] text-slate-400 font-mono uppercase tracking-tighter">ID: {p.id.slice(-6)}</p>
+                              <span className="text-[10px] bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded font-bold">
+                                {p.cards.length} Cartelle
+                              </span>
                             </div>
                           </div>
                         </div>
-                        
+
                         <div className="flex flex-col items-end gap-1">
                           {p.lastWin !== 'None' ? (
                             <div className="bg-amber-100 text-amber-700 px-3 py-1 rounded-full text-[10px] font-black uppercase ring-1 ring-amber-200 flex items-center gap-1 animate-pulse">
@@ -639,12 +711,12 @@ const App: React.FC = () => {
                 </div>
 
                 <div className="mt-8 p-4 bg-blue-50 rounded-2xl border border-blue-100">
-                   <div className="flex items-start gap-3">
-                      <Info className="text-blue-600 mt-0.5" size={16} />
-                      <p className="text-xs text-blue-700 leading-relaxed font-medium">
-                        Ogni cartella acquistata (sia tua che dei giocatori) aggiunge 10 Token al Montepremi comune visualizzato in alto.
-                      </p>
-                   </div>
+                  <div className="flex items-start gap-3">
+                    <Info className="text-blue-600 mt-0.5" size={16} />
+                    <p className="text-xs text-blue-700 leading-relaxed font-medium">
+                      Ogni cartella acquistata (sia tua che dei giocatori) aggiunge 10 Token al Montepremi comune visualizzato in alto.
+                    </p>
+                  </div>
                 </div>
               </div>
             </div>
@@ -668,27 +740,27 @@ const App: React.FC = () => {
       </footer>
 
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-white/90 backdrop-blur-2xl border border-slate-200/50 px-10 py-4 rounded-full shadow-2xl flex items-center gap-12 z-50 ring-1 ring-white">
-          <div className="flex flex-col items-center">
-            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Estratti</span>
-            <span className="text-2xl font-black text-red-600">{drawnNumbers.length}<span className="text-slate-300 text-sm font-normal">/90</span></span>
-          </div>
-          <div className="h-10 w-px bg-slate-200"></div>
-          
-          {role === 'Host' ? (
-            <button 
-              onClick={drawNumber}
-              disabled={isAutoPlaying || drawnNumbers.length >= 90}
-              className="flex items-center gap-3 px-8 py-3 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all disabled:opacity-50 shadow-xl shadow-slate-900/20 active:scale-95"
-            >
-              <Plus size={20} /> Prossimo Numero
-            </button>
-          ) : (
-             <div className="flex flex-col items-center">
-              <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Sei Connesso come</span>
-              <span className="text-2xl font-black text-emerald-600">{userName}</span>
-            </div>
-          )}
+        <div className="flex flex-col items-center">
+          <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Estratti</span>
+          <span className="text-2xl font-black text-red-600">{drawnNumbers.length}<span className="text-slate-300 text-sm font-normal">/90</span></span>
         </div>
+        <div className="h-10 w-px bg-slate-200"></div>
+
+        {role === 'Host' ? (
+          <button
+            onClick={drawNumber}
+            disabled={isAutoPlaying || drawnNumbers.length >= 90}
+            className="flex items-center gap-3 px-8 py-3 bg-slate-900 text-white rounded-2xl font-bold hover:bg-slate-800 transition-all disabled:opacity-50 shadow-xl shadow-slate-900/20 active:scale-95"
+          >
+            <Plus size={20} /> Prossimo Numero
+          </button>
+        ) : (
+          <div className="flex flex-col items-center">
+            <span className="text-[10px] uppercase font-bold text-slate-400 tracking-wider">Sei Connesso come</span>
+            <span className="text-2xl font-black text-emerald-600">{userName}</span>
+          </div>
+        )}
+      </div>
     </div>
   );
 };

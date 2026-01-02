@@ -27,6 +27,12 @@ Il metodo più veloce per iniziare resta **Netlify Drop**:
 *   **Sintesi Vocale (TTS):** Lettura automatica dei numeri.
 *   **Verifica Vincite:** Ambo, Terno, Quaterna, Cinquina, Tombola.
 
+## 📜 Regole del Gioco
+
+Il sistema applica le regole "severe" della Tombola:
+1.  **Vittorie Condivise**: Possibili solo se avvengono sullo **stesso numero estratto**.
+2.  **Turni Chiusi**: Se l'host estrae un nuovo numero, i premi del turno precedente sono persi. Bisogna essere veloci a dichiarare!
+
 ## 🛠️ Esecuzione Locale (Sviluppo)
 
 1.  **Installa:** `npm install`

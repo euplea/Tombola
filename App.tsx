@@ -14,6 +14,7 @@ import TombolaCardUI from './components/TombolaCardUI';
 import GameManual from './components/GameManual';
 import PrintableCards from './components/PrintableCards';
 import PrizePool from './components/PrizePool';
+import Toast from './components/Toast';
 import { Play, Pause, RotateCcw, Plus, Users, Wifi, Monitor, User, Info, ArrowRight, Volume2, Trophy, BookOpen, Printer, Coins } from 'lucide-react';
 import confetti from 'canvas-confetti';
 import { Peer } from 'peerjs';
@@ -44,6 +45,13 @@ const App: React.FC = () => {
   const [currentWinLevel, setCurrentWinLevel] = useState<WinType>('None');
   const [winLevelTurnIndex, setWinLevelTurnIndex] = useState<number>(-1);
   const [drawSpeed, setDrawSpeed] = useState<number>(5000); // Default 5 seconds
+
+  // Toast Notification State
+  const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' | 'info' } | null>(null);
+
+  const showToast = (message: string, type: 'success' | 'error' | 'info' = 'info') => {
+    setToast({ message, type });
+  };
 
   const timerRef = useRef<any>(null);
 
@@ -95,7 +103,17 @@ const App: React.FC = () => {
     if (isJoining && peer && roomId) {
       console.log("Peer ready, connecting to:", roomId);
       connectToHost(roomId.toUpperCase());
-      setIsJoining(false);
+
+      // Safety timeout in case connection hangs
+      const safetyTimeout = setTimeout(() => {
+        if (isJoining) {
+          setIsJoining(false);
+          setError("Tempo di connessione scaduto. Riprova.");
+          showToast("Tempo di connessione scaduto.", "error");
+        }
+      }, 10000); // 10s timeout
+
+      return () => clearTimeout(safetyTimeout);
     }
   }, [isJoining, peer, roomId]);
 
@@ -120,11 +138,16 @@ const App: React.FC = () => {
     window.speechSynthesis.speak(utterance);
   };
 
-  // Simplified Room ID generation
+  // Simplified Room ID generation (4 alphanumeric characters)
   const generateSimpleRoomId = () => {
-    // Generate T + 3 digits (e.g. T123)
-    const num = Math.floor(Math.random() * 900) + 100; // 100 to 999
-    return `T${num}`;
+    // Generate 4 random characters (A-Z, 0-9)
+    // Excluding similar characters like 0/O, 1/I to avoid confusion
+    const chars = '23456789ABCDEFGHJKLMNPQRSTUVWXYZ';
+    let result = '';
+    for (let i = 0; i < 4; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
   };
 
   // Initialize Peer
@@ -135,9 +158,26 @@ const App: React.FC = () => {
         setRoomId(id);
       }
       setPeer(p);
+      setError(null); // Clear errors on success
     });
+
     p.on('error', (err: any) => {
-      setError(`Errore di connessione: ${err.type}`);
+      console.error("Peer Error:", err);
+      if (err.type === 'unavailable-id') {
+        // Retry with new ID if host
+        if (updateRoomId) {
+          initPeer(generateSimpleRoomId(), true);
+          return;
+        }
+        setError("ID non disponibile. Riprova.");
+      } else if (err.type === 'peer-unavailable') {
+        setError("Stanza non trovata. Controlla il Codice o verifica che l'Host sia connesso.");
+      } else if (err.type === 'network') {
+        setError("Errore di rete. Controlla la connessione.");
+      } else {
+        setError(`Errore di connessione: ${err.type}`);
+      }
+      setIsJoining(false);
     });
     return p;
   };
@@ -241,10 +281,10 @@ const App: React.FC = () => {
       if (winners.length > 1) {
         const winnerList = winners.join(', ');
         speakItalian(`Vittoria condivisa! Hanno fatto Tombola: ${winnerList}! Complimenti a tutti!`);
-        alert(`VITTORIA CONDIVISA! Vincitori: ${winnerList}`);
+        showToast(`VITTORIA CONDIVISA! Vincitori: ${winnerList}`, 'success');
       } else if (winners.length === 1) {
         speakItalian(`Tombola! Il vincitore unico è ${winners[0]}!`);
-        alert(`TOMBOLA! Vincitore: ${winners[0]}`);
+        showToast(`TOMBOLA! Vincitore: ${winners[0]}`, 'success');
       } else {
         // This shouldn't happen if the claim is valid, but for safety:
         speakItalian(`${claimantName} ha dichiarato Tombola, ma i numeri non corrispondono.`);
@@ -262,7 +302,7 @@ const App: React.FC = () => {
         p.id === claimantId ? { ...p, lastWin: winType } : p
       ));
 
-      alert(`${claimantName} dichiara: ${winType}!`);
+      showToast(`${claimantName} dichiara: ${winType}!`, 'success');
     }
   }, [userName, myCards, players, drawnNumbers, currentWinLevel, winLevelTurnIndex]);
 
@@ -313,7 +353,10 @@ const App: React.FC = () => {
   const connectToHost = (id: string) => {
     if (!peer) return;
     const conn = peer.connect(id);
+
+    // reset joining state when connection is actually established/open
     conn.on('open', () => {
+      setIsJoining(false); // SUCCESS!
       setConnections({ host: conn });
       conn.send({
         type: 'PLAYER_JOINED',
@@ -321,6 +364,18 @@ const App: React.FC = () => {
       });
       setRole('Player');
     });
+
+    conn.on('error', (err: any) => {
+      console.error("Connection Error:", err);
+      setIsJoining(false);
+      // PeerJS might return minimal error info here, relying mostly on peer.on('error')
+      setError("Impossibile connettersi all'Host. Verifica il codice.");
+    });
+
+    // Also catch immediate peer errors related to this connection
+    // Note: peer-unavailable often triggers the GLOBAL peer.on('error') handler 
+    // implemented in initPeer, but we keep this listener just in case specific handling is needed here
+    // or if we need to reset component-specific state like 'isJoining'.
 
     conn.on('data', (data: PeerMessage) => {
       if (data.type === 'SYNC_STATE' || data.type === 'DRAW_NUMBER') {
@@ -393,14 +448,34 @@ const App: React.FC = () => {
   };
 
   const handleStartHost = () => {
-    if (!userName) return alert('Inserisci il tuo nome');
+    if (!userName) return showToast('Inserisci il tuo nome', 'error');
+
+    // Cleanup existing peer
+    if (peer) {
+      peer.destroy();
+      setPeer(null);
+      setConnections({});
+    }
+
     initPeer(generateSimpleRoomId(), true);
     setRole('Host');
   };
 
   const handleJoinGame = () => {
-    if (!userName || !roomId) return alert('Inserisci nome e Codice Tombola');
-    setIsJoining(true);
+    if (!userName || !roomId) return showToast('Inserisci nome e Codice Tombola', 'error');
+
+    console.log("Starting Join Process...");
+
+    // cleanup existing peer to prevent race conditions in useEffect
+    if (peer) {
+      console.log("Destroying existing peer instance:", peer.id);
+      peer.destroy();
+      setPeer(null);
+      setConnections({});
+    }
+
+    setError(null); // Clear previous errors
+    setIsJoining(true); // Start loading state
     initPeer(undefined, false);
     // Connection happens in useEffect once peer is ready
   };
@@ -453,6 +528,12 @@ const App: React.FC = () => {
               <p className="text-slate-400 mb-8">Inserisci il "Codice Network" mostrato sull'host per ricevere le tue cartelle digitali.</p>
 
               <div className="space-y-4">
+                {error && (
+                  <div className="bg-red-500/20 border border-red-500/50 text-red-200 px-4 py-3 rounded-xl text-sm font-bold flex items-center gap-2 animate-pulse">
+                    <Info size={16} />
+                    {error}
+                  </div>
+                )}
                 <input
                   type="text"
                   placeholder="Tuo Nome"
@@ -463,18 +544,29 @@ const App: React.FC = () => {
                 />
                 <input
                   type="text"
-                  placeholder="Codice Tombola (es. TOMBOLA-ABCD)"
+                  placeholder="Codice Tombola (es. A7B2)"
                   className="w-full bg-slate-900 border border-slate-700 rounded-xl px-4 py-3 focus:border-amber-500 outline-none transition-all"
                   value={roomId}
-                  onChange={e => setRoomId(e.target.value)}
+                  onChange={e => setRoomId(e.target.value.toUpperCase())}
                   data-testid="room-id-input"
                 />
                 <button
                   onClick={handleJoinGame}
                   data-testid="join-game-btn"
-                  className="w-full bg-amber-500 hover:bg-amber-600 py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg shadow-amber-900/20"
+                  disabled={isJoining}
+                  className={`w-full py-4 rounded-xl font-bold flex items-center justify-center gap-2 shadow-lg transition-all ${isJoining
+                    ? 'bg-slate-700 text-slate-400 cursor-not-allowed'
+                    : 'bg-amber-500 hover:bg-amber-600 shadow-amber-900/20 text-slate-900'
+                    }`}
                 >
-                  Entra <Wifi size={20} />
+                  {isJoining ? (
+                    <>
+                      <div className="w-5 h-5 border-2 border-slate-400 border-t-transparent rounded-full animate-spin"></div>
+                      Connessione...
+                    </>
+                  ) : (
+                    <>Entra <Wifi size={20} /></>
+                  )}
                 </button>
               </div>
             </div>
@@ -499,6 +591,15 @@ const App: React.FC = () => {
     <div className="min-h-screen bg-slate-50 text-slate-900 pb-20">
       {/* Manual Modal */}
       {showManual && <GameManual onClose={() => setShowManual(false)} />}
+
+      {/* Toast Notification */}
+      {toast && (
+        <Toast
+          message={toast.message}
+          type={toast.type}
+          onClose={() => setToast(null)}
+        />
+      )}
 
       {/* Printer Modal */}
       {showPrinter && <PrintableCards onClose={() => setShowPrinter(false)} />}
